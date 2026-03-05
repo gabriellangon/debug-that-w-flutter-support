@@ -356,7 +356,7 @@ describe("CdpClient", () => {
 	});
 
 	describe("enableDomains", () => {
-		test("sends enable for all four domains", async () => {
+		test("sends enable for required and optional domains", async () => {
 			const c = client!;
 			const sentMethods: string[] = [];
 			const originalSend = c["ws"].send.bind(c["ws"]);
@@ -364,24 +364,52 @@ describe("CdpClient", () => {
 				if (typeof data === "string") {
 					const parsed = JSON.parse(data);
 					sentMethods.push(parsed.method);
+					// Auto-respond with success
+					setTimeout(() => {
+						c.handleMessage(JSON.stringify({ id: parsed.id, result: {} }));
+					}, 0);
 				}
 				return originalSend(data as string);
 			};
 
-			const promise = c.enableDomains();
-
-			// Respond to all four
-			c.handleMessage(JSON.stringify({ id: 1, result: {} }));
-			c.handleMessage(JSON.stringify({ id: 2, result: {} }));
-			c.handleMessage(JSON.stringify({ id: 3, result: {} }));
-			c.handleMessage(JSON.stringify({ id: 4, result: {} }));
-
-			await promise;
+			await c.enableDomains();
 
 			expect(sentMethods).toContain("Debugger.enable");
 			expect(sentMethods).toContain("Runtime.enable");
 			expect(sentMethods).toContain("Profiler.enable");
 			expect(sentMethods).toContain("HeapProfiler.enable");
+			expect(c.enabledDomains.has("Debugger")).toBe(true);
+			expect(c.enabledDomains.has("Runtime")).toBe(true);
+			expect(c.enabledDomains.has("Profiler")).toBe(true);
+			expect(c.enabledDomains.has("HeapProfiler")).toBe(true);
+		});
+
+		test("tracks which optional domains succeed", async () => {
+			const c = client!;
+			const originalSend = c["ws"].send.bind(c["ws"]);
+			c["ws"].send = (data: unknown) => {
+				if (typeof data === "string") {
+					const parsed = JSON.parse(data);
+					setTimeout(() => {
+						if (parsed.method === "Profiler.enable" || parsed.method === "HeapProfiler.enable") {
+							// Simulate Bun: optional domains fail
+							c.handleMessage(
+								JSON.stringify({ id: parsed.id, error: { code: -32601, message: "not found" } }),
+							);
+						} else {
+							c.handleMessage(JSON.stringify({ id: parsed.id, result: {} }));
+						}
+					}, 0);
+				}
+				return originalSend(data as string);
+			};
+
+			await c.enableDomains();
+
+			expect(c.enabledDomains.has("Debugger")).toBe(true);
+			expect(c.enabledDomains.has("Runtime")).toBe(true);
+			expect(c.enabledDomains.has("Profiler")).toBe(false);
+			expect(c.enabledDomains.has("HeapProfiler")).toBe(false);
 		});
 	});
 
@@ -403,6 +431,102 @@ describe("CdpClient", () => {
 			await promise;
 
 			expect(sentMethods).toEqual(["Runtime.runIfWaitingForDebugger"]);
+		});
+	});
+
+	describe("waitFor", () => {
+		test("resolves with event params when event fires", async () => {
+			const c = client!;
+			const promise = c.waitFor("Debugger.paused", { timeoutMs: 1_000 });
+
+			c.handleMessage(
+				JSON.stringify({
+					method: "Debugger.paused",
+					params: { reason: "other", callFrames: [] },
+				}),
+			);
+
+			const result = await promise;
+			expect(result).toEqual({ reason: "other", callFrames: [] });
+		});
+
+		test("rejects on timeout", async () => {
+			const c = client!;
+			const promise = c.waitFor("Debugger.paused", { timeoutMs: 50 });
+
+			await expect(promise).rejects.toThrow("waitFor timed out: Debugger.paused");
+		});
+
+		test("filter skips non-matching events", async () => {
+			const c = client!;
+			const promise = c.waitFor("Debugger.paused", {
+				timeoutMs: 1_000,
+				filter: (p) => p.reason === "step",
+			});
+
+			// This one should be skipped
+			c.handleMessage(
+				JSON.stringify({
+					method: "Debugger.paused",
+					params: { reason: "other", callFrames: [] },
+				}),
+			);
+
+			// This one should match
+			c.handleMessage(
+				JSON.stringify({
+					method: "Debugger.paused",
+					params: { reason: "step", callFrames: [] },
+				}),
+			);
+
+			const result = await promise;
+			expect(result).toEqual({ reason: "step", callFrames: [] });
+		});
+
+		test("cleans up listener after resolving", async () => {
+			const c = client!;
+			const promise = c.waitFor("Debugger.paused", { timeoutMs: 1_000 });
+
+			c.handleMessage(
+				JSON.stringify({
+					method: "Debugger.paused",
+					params: { reason: "other", callFrames: [] },
+				}),
+			);
+
+			await promise;
+
+			// Listener should be cleaned up
+			expect(c["listeners"].get("Debugger.paused")?.size ?? 0).toBe(0);
+		});
+
+		test("cleans up listener after timeout", async () => {
+			const c = client!;
+			const promise = c.waitFor("Debugger.paused", { timeoutMs: 50 });
+
+			try {
+				await promise;
+			} catch {
+				// expected
+			}
+
+			expect(c["listeners"].get("Debugger.paused")?.size ?? 0).toBe(0);
+		});
+
+		test("works with untyped events", async () => {
+			const c = client!;
+			const promise = c.waitFor("Inspector.initialized", { timeoutMs: 1_000 });
+
+			c.handleMessage(
+				JSON.stringify({
+					method: "Inspector.initialized",
+					params: {},
+				}),
+			);
+
+			const result = await promise;
+			expect(result).toEqual({});
 		});
 	});
 
