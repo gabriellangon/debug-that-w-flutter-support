@@ -1,6 +1,6 @@
 {
   "name": "agent-dbg",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Node.js Debugger CLI for AI Agents",
   "type": "module",
   "bin": {
