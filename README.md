@@ -17,6 +17,7 @@ Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browse
 | Deno | JavaScript / TypeScript | Planned | V8 Inspector (CDP) |
 | Python (debugpy) | Python | Planned | DAP |
 | Go (delve) | Go | Planned | DAP |
+| Java (JDWP) | Java / Kotlin | Planned | DAP |
 
 agent-dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter. For native languages, use `--runtime lldb` to select the DAP adapter.
 
