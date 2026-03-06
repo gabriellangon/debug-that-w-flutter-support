@@ -3,11 +3,10 @@
 ## Project Overview
 CLI debugger built with Bun, optimized for AI agent consumption.
 Supports Node.js (CDP), Bun (JSC/WebKit), and native code via LLDB (DAP).
-See `SPEC.md` for full specification, `PROGRESS.md` for implementation status.
 
 ## Tech Stack
-- **Runtime**: Bun (compiled to standalone binary via `bun build --compile`)
-- **Language**: TypeScript (strict mode, `noUncheckedIndexedAccess`)
+- **Runtime**: Bun
+- **Language**: TypeScript
 - **Linting/Formatting**: Biome
 - **Testing**: bun:test
 - **Validation**: Zod v4 (mini)
@@ -49,7 +48,7 @@ tests/
 - Keep output compact — one entity per line where possible
 - Use @refs for all inspectable entities in output
 - Use `parseIntFlag()` from `src/cli/parse-flag.ts` for integer CLI flags (NaN-safe)
-- Use `parseFileLine()` / `parseFileLineColumn()` from `src/cli/parse-target.ts` for file:line parsing
+- Use `parseFileLine()` / `parseFileLineColumn()` from `src/cli/parse-target.ts` for file:line:column parsing
 - Use `escapeRegex()` from `src/util/escape-regex.ts` for CDP urlRegex patterns
 - Use `formatTimestamp()` from `src/formatter/timestamp.ts` for time display
 - Import timeout/limit values from `src/constants.ts` — do not hardcode magic numbers
