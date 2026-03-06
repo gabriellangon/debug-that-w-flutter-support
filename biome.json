@@ -38,6 +38,16 @@
 			"formatter": { "enabled": false }
 		},
 		{
+			"includes": ["tests/**/*.test.ts"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noNonNullAssertion": "off"
+					}
+				}
+			}
+		},
+		{
 			"includes": ["tests/fixtures/**"],
 			"linter": { "enabled": false },
 			"formatter": { "enabled": false },
