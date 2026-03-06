@@ -1,3 +1,4 @@
+import { escapeRegex } from "../util/escape-regex.ts";
 import type { DebugSession } from "./session.ts";
 
 export async function setBreakpoint(
@@ -44,7 +45,7 @@ export async function setBreakpoint(
 	} else {
 		url = session.findScriptUrl(actualFile);
 		if (!url && !generatedScriptId) {
-			urlRegex = `${actualFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+			urlRegex = `${escapeRegex(actualFile)}$`;
 		}
 	}
 
@@ -422,7 +423,7 @@ export async function setLogpoint(
 
 	let urlRegex: string | undefined;
 	if (!url) {
-		urlRegex = `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+		urlRegex = `${escapeRegex(file)}$`;
 	}
 
 	// Find scriptId for Bun adapter

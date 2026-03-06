@@ -870,7 +870,12 @@ export class DebugSession {
 				if (sourceMapURL) {
 					info.sourceMapURL = sourceMapURL;
 					// Load source map asynchronously (fire-and-forget)
-					this.sourceMapResolver.loadSourceMap(scriptId, info.url, sourceMapURL).catch(() => {});
+					this.sourceMapResolver.loadSourceMap(scriptId, info.url, sourceMapURL).catch((err) => {
+						this.daemonLogger.debug(
+							"sourcemap.load.failed",
+							`Failed to load source map for ${info.url}: ${err instanceof Error ? err.message : String(err)}`,
+						);
+					});
 				}
 				this.scripts.set(scriptId, info);
 			}
@@ -979,7 +984,9 @@ export class DebugSession {
 		let accumulated = "";
 
 		const timeout = setTimeout(() => {
-			reader.cancel().catch(() => {});
+			reader.cancel().catch(() => {
+				// Reader cancellation errors are expected during timeout
+			});
 		}, INSPECTOR_TIMEOUT_MS);
 
 		try {
@@ -1054,7 +1061,9 @@ export class DebugSession {
 				.then(({ done }) => {
 					if (!done) pump();
 				})
-				.catch(() => {});
+				.catch(() => {
+					// Stream closed or errored — expected during process exit
+				});
 		};
 		pump();
 	}

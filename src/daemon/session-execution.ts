@@ -1,3 +1,4 @@
+import { escapeRegex } from "../util/escape-regex.ts";
 import type { DebugSession } from "./session.ts";
 
 export async function continueExecution(session: DebugSession): Promise<void> {
@@ -67,7 +68,7 @@ export async function runToLocation(
 	// Set a temporary breakpoint (CDP lines are 0-based)
 	const bpResult = await session.cdp.send("Debugger.setBreakpointByUrl", {
 		lineNumber: line - 1,
-		urlRegex: scriptUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+		urlRegex: escapeRegex(scriptUrl),
 	});
 
 	const breakpointId = bpResult.breakpointId;

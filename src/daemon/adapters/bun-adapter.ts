@@ -1,6 +1,7 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { CdpClient } from "../../cdp/client.ts";
 import { JscClient } from "../../cdp/jsc-client.ts";
+import { escapeRegex } from "../../util/escape-regex.ts";
 import type { RuntimeAdapter } from "../runtime-adapter.ts";
 import type { DebugSession, ScriptInfo } from "../session.ts";
 
@@ -183,8 +184,4 @@ export class BunAdapter implements RuntimeAdapter {
 		}
 		return null;
 	}
-}
-
-function escapeRegex(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
