@@ -1,5 +1,6 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { CdpClient } from "../../cdp/client.ts";
+import { BRK_PAUSE_TIMEOUT_MS, MAX_INTERNAL_PAUSE_SKIPS } from "../../constants.ts";
 import type { RuntimeAdapter } from "../runtime-adapter.ts";
 import type { DebugSession, ScriptInfo } from "../session.ts";
 
@@ -23,7 +24,7 @@ export class NodeAdapter implements RuntimeAdapter {
 		if (!session.isPaused() && session.cdp) {
 			await session.cdp.send("Debugger.pause");
 			await session.cdp.send("Runtime.runIfWaitingForDebugger");
-			const deadline = Date.now() + 2_000;
+			const deadline = Date.now() + BRK_PAUSE_TIMEOUT_MS;
 			while (!session.isPaused() && Date.now() < deadline) {
 				await Bun.sleep(50);
 			}
@@ -110,7 +111,7 @@ export class NodeAdapter implements RuntimeAdapter {
 			session.isPaused() &&
 			session.cdp &&
 			session.pauseInfo?.url?.startsWith(this.internalUrlPrefix) &&
-			skips < 5
+			skips < MAX_INTERNAL_PAUSE_SKIPS
 		) {
 			skips++;
 			const waiter = session.createPauseWaiter(5_000);

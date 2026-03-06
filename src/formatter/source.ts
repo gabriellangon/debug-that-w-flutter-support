@@ -6,18 +6,18 @@ export interface SourceLine {
 	hasBreakpoint?: boolean;
 }
 
-const MAX_LINE_WIDTH = 120;
+import { MAX_SOURCE_LINE_WIDTH } from "../constants.ts";
 
 /** Trim a long line to a window around the column, adding … on truncated sides. Returns trimmed content and adjusted column offset (0-based). */
 function trimLine(content: string, column?: number): { text: string; caretOffset?: number } {
 	const col = column !== undefined ? column - 1 : undefined; // 0-based index
 
-	if (content.length <= MAX_LINE_WIDTH) {
+	if (content.length <= MAX_SOURCE_LINE_WIDTH) {
 		return { text: content, caretOffset: col };
 	}
 
 	const anchor = col ?? 0;
-	const half = Math.floor(MAX_LINE_WIDTH / 2);
+	const half = Math.floor(MAX_SOURCE_LINE_WIDTH / 2);
 
 	let start = anchor - half;
 	let end = anchor + half;

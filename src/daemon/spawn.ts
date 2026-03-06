@@ -1,9 +1,7 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { SPAWN_POLL_INTERVAL_MS, SPAWN_TIMEOUT_MS } from "../constants.ts";
 import { DaemonClient } from "./client.ts";
 import { ensureSocketDir, getDaemonLogPath, getSocketPath } from "./paths.ts";
-
-const POLL_INTERVAL_MS = 50;
-const SPAWN_TIMEOUT_MS = 5000;
 
 export async function spawnDaemon(
 	session: string,
@@ -55,7 +53,7 @@ export async function spawnDaemon(
 		if (existsSync(socketPath)) {
 			return;
 		}
-		await Bun.sleep(POLL_INTERVAL_MS);
+		await Bun.sleep(SPAWN_POLL_INTERVAL_MS);
 	}
 
 	// Read daemon log to surface the actual error

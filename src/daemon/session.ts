@@ -138,8 +138,15 @@ export interface SessionStatus {
 
 // Node.js: "Debugger listening on ws://..."
 // Bun:     "  ws://localhost:PORT/ID" (on its own indented line)
+import {
+	BUFFER_TRIM_BATCH,
+	INSPECTOR_TIMEOUT_MS,
+	MAX_BUFFERED_MESSAGES,
+	PAUSE_WAITER_TIMEOUT_MS,
+	STATE_WAIT_TIMEOUT_MS,
+} from "../constants.ts";
+
 const INSPECTOR_URL_REGEX = /(?:Debugger listening on\s+)?(wss?:\/\/\S+)/;
-const INSPECTOR_TIMEOUT_MS = 5_000;
 
 export class DebugSession {
 	cdp: CdpClient | null = null;
@@ -388,7 +395,7 @@ export class DebugSession {
 	 * Waits until the session reaches the target state (event-driven, no polling).
 	 * Resolves immediately if already in the target state.
 	 */
-	waitForState(target: "idle" | "running" | "paused", timeoutMs = 5000): Promise<void> {
+	waitForState(target: "idle" | "running" | "paused", timeoutMs = STATE_WAIT_TIMEOUT_MS): Promise<void> {
 		if (this.state === target) return Promise.resolve();
 		return new Promise<void>((resolve, reject) => {
 			const waiter = { target, resolve };
@@ -718,7 +725,7 @@ export class DebugSession {
 	 * miss events. Does NOT check current state — the caller is about to
 	 * send a resume/step command.
 	 */
-	createPauseWaiter(timeoutMs = 30_000): Promise<void> {
+	createPauseWaiter(timeoutMs = PAUSE_WAITER_TIMEOUT_MS): Promise<void> {
 		return new Promise<void>((resolve) => {
 			let settled = false;
 
@@ -895,9 +902,8 @@ export class DebugSession {
 				line: topFrame?.lineNumber !== undefined ? topFrame.lineNumber + 1 : undefined,
 			};
 			this.consoleMessages.push(msg);
-			if (this.consoleMessages.length > 1100) {
-				// Drop oldest 100 at once to avoid O(n) shift on every message
-				this.consoleMessages.splice(0, 100);
+			if (this.consoleMessages.length > MAX_BUFFERED_MESSAGES + BUFFER_TRIM_BATCH) {
+				this.consoleMessages.splice(0, BUFFER_TRIM_BATCH);
 			}
 		});
 
@@ -927,8 +933,8 @@ export class DebugSession {
 					.join("\n");
 			}
 			this.exceptionEntries.push(entry);
-			if (this.exceptionEntries.length > 1100) {
-				this.exceptionEntries.splice(0, 100);
+			if (this.exceptionEntries.length > MAX_BUFFERED_MESSAGES + BUFFER_TRIM_BATCH) {
+				this.exceptionEntries.splice(0, BUFFER_TRIM_BATCH);
 			}
 		});
 	}

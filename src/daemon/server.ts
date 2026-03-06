@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { MAX_REQUEST_SIZE } from "../constants.ts";
 import {
 	type DaemonRequest,
 	DaemonRequestSchema,
@@ -71,7 +72,7 @@ export class DaemonServer {
 					socket.data.buffer += data.toString();
 
 					// Guard against unbounded buffer growth (max 1MB)
-					if (socket.data.buffer.length > 1_048_576) {
+					if (socket.data.buffer.length > MAX_REQUEST_SIZE) {
 						server.sendResponse(socket, {
 							ok: false,
 							error: "Request too large (max 1MB)",

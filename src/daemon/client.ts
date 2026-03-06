@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { type DaemonResponse, DaemonResponseSchema } from "../protocol/messages.ts";
 import { getLockPath, getSocketDir, getSocketPath } from "./paths.ts";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 
 export class DaemonClient {
 	private session: string;
@@ -25,9 +25,9 @@ export class DaemonClient {
 			const timer = setTimeout(() => {
 				if (!settled) {
 					settled = true;
-					reject(new Error(`Request timed out after ${DEFAULT_TIMEOUT_MS}ms`));
+					reject(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS}ms`));
 				}
-			}, DEFAULT_TIMEOUT_MS);
+			}, REQUEST_TIMEOUT_MS);
 
 			Bun.connect<undefined>({
 				unix: socketPath,

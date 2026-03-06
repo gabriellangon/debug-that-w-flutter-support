@@ -1,7 +1,7 @@
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import type { Subprocess } from "bun";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Required for handler map that stores both typed and untyped handlers
 type AnyHandler = (...args: any[]) => void;
@@ -71,7 +71,7 @@ export class DapClient {
 			const timer = setTimeout(() => {
 				this.pending.delete(seq);
 				reject(new Error(`DAP request timed out: ${command} (seq=${seq})`));
-			}, DEFAULT_TIMEOUT_MS);
+			}, REQUEST_TIMEOUT_MS);
 
 			this.pending.set(seq, { resolve, reject, timer });
 			this.writeMessage(request);

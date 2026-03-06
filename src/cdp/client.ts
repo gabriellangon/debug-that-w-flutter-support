@@ -2,7 +2,7 @@ import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping.j
 import type { CdpLogger } from "./logger.ts";
 import type { CdpEvent, CdpRequest, CdpResponse } from "./types.ts";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 
 type CdpCommand = keyof ProtocolMapping.Commands;
 type CdpEventName = keyof ProtocolMapping.Events;
@@ -86,7 +86,7 @@ export class CdpClient {
 				this.pending.delete(id);
 				this.sentMethods.delete(id);
 				reject(new Error(`CDP request timed out: ${method} (id=${id})`));
-			}, DEFAULT_TIMEOUT_MS);
+			}, REQUEST_TIMEOUT_MS);
 
 			this.pending.set(id, { resolve, reject, timer });
 			this.ws.send(JSON.stringify(request));
@@ -136,7 +136,7 @@ export class CdpClient {
 		// biome-ignore lint/suspicious/noExplicitAny: Implementation signature accepts both typed and untyped filter functions
 		opts?: { timeoutMs?: number; filter?: (...args: any[]) => boolean },
 	): Promise<unknown> {
-		const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+		const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
 		const filter = opts?.filter;
 
 		return new Promise<unknown>((resolve, reject) => {
