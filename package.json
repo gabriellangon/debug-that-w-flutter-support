@@ -35,7 +35,7 @@
     "test": "bun test tests/unit/ && bun test --concurrent tests/integration/",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "update-jsc-protocol": "curl -sL https://raw.githubusercontent.com/oven-sh/bun/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts -o src/cdp/jsc-protocol.d.ts"
   },
   "devDependencies": {
