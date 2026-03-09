@@ -38,5 +38,8 @@ export const BUFFER_TRIM_BATCH = 100;
 /** Max line width for source code display before horizontal trimming. */
 export const MAX_SOURCE_LINE_WIDTH = 120;
 
+/** Time to wait for the DAP "initialized" event during launch/attach. */
+export const INITIALIZED_TIMEOUT_MS = 10_000;
+
 /** Max request payload size (bytes) accepted by the daemon IPC server. */
 export const MAX_REQUEST_SIZE = 1_048_576; // 1MB

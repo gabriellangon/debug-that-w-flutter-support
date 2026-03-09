@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
+import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
 import type {
 	ConsoleMessage,
 	ExceptionEntry,
@@ -47,6 +48,14 @@ function resolveAdapterCommand(runtime: string): string[] {
 		}
 		case "codelldb":
 			return ["codelldb", "--port", "0"];
+		case "python":
+		case "debugpy": {
+			// debugpy adapter runs as a Python module
+			// Try python3 first, then python
+			const py3 = Bun.spawnSync(["which", "python3"]);
+			const pyBin = py3.exitCode === 0 ? "python3" : "python";
+			return [pyBin, "-m", "debugpy.adapter"];
+		}
 		default:
 			// Assume the runtime string is the adapter binary name or path
 			return [runtime];
@@ -131,7 +140,6 @@ export class DapSession {
 		await this.initializeAdapter();
 
 		// Build launch arguments. The exact schema depends on the adapter.
-		// For lldb-dap: { program, args, stopOnEntry, ... }
 		const program = options.program ?? command[0];
 		const programArgs = options.args ?? command.slice(1);
 		const launchArgs: Record<string, unknown> = {
@@ -141,8 +149,19 @@ export class DapSession {
 			cwd: process.cwd(),
 		};
 
-		await this.dap.send("launch", launchArgs);
+		// Runtime-specific launch arguments
+		if (this._runtime === "python" || this._runtime === "debugpy") {
+			launchArgs.console = "internalConsole";
+			launchArgs.justMyCode = false;
+		}
+
+		// DAP spec: some adapters (e.g. debugpy) defer the launch response until
+		// after configurationDone. Send launch without awaiting, wait for the
+		// "initialized" event, then send configurationDone, then await launch.
+		const launchPromise = this.dap.send("launch", launchArgs);
+		await this.waitForInitialized();
 		await this.dap.send("configurationDone");
+		await launchPromise;
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
@@ -179,8 +198,10 @@ export class DapSession {
 			? { program: target, waitFor: true }
 			: { pid };
 
-		await this.dap.send("attach", attachArgs);
+		const attachPromise = this.dap.send("attach", attachArgs);
+		await this.waitForInitialized();
 		await this.dap.send("configurationDone");
+		await attachPromise;
 
 		// Wait briefly for initial stop
 		await this.waitForStop(5_000).catch(() => {
@@ -235,12 +256,13 @@ export class DapSession {
 		this.requireConnected();
 		this.requirePaused();
 
-		const waiter = this.createStoppedWaiter(30_000);
-		await this.getDap().send("continue", { threadId: this._threadId });
 		this._state = "running";
 		this._pauseInfo = null;
 		this._stackFrames = [];
 		this.refs.clearVolatile();
+
+		const waiter = this.createStoppedWaiter(30_000);
+		await this.getDap().send("continue", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -249,13 +271,13 @@ export class DapSession {
 		this.requireConnected();
 		this.requirePaused();
 
-		const waiter = this.createStoppedWaiter(30_000);
-
-		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
-		await this.getDap().send(command, { threadId: this._threadId });
 		this._state = "running";
 		this._pauseInfo = null;
 		this.refs.clearVolatile();
+
+		const waiter = this.createStoppedWaiter(30_000);
+		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
+		await this.getDap().send(command, { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -1226,6 +1248,26 @@ export class DapSession {
 					reject(e);
 				},
 			};
+		});
+	}
+
+	/**
+	 * Wait for the DAP "initialized" event. Some adapters send this during
+	 * launch/attach; we must receive it before sending configurationDone.
+	 */
+	private async waitForInitialized(): Promise<void> {
+		const dap = this.getDap();
+		return new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				dap.off("initialized", handler);
+				reject(new Error("Timed out waiting for DAP initialized event"));
+			}, INITIALIZED_TIMEOUT_MS);
+			const handler = () => {
+				clearTimeout(timer);
+				dap.off("initialized", handler);
+				resolve();
+			};
+			dap.on("initialized", handler);
 		});
 	}
 
