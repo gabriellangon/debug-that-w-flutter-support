@@ -114,7 +114,7 @@ dbg stop
 <summary><code>dbg --help</code> full reference</summary>
 
 ```
-dbg — Node.js debugger CLI for AI agents
+dbg — Debugger CLI for AI agents
 
 Usage: dbg <command> [options]
 

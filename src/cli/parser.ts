@@ -208,12 +208,13 @@ function editDistance(a: string, b: string): number {
 }
 
 function printHelp(): void {
-	console.log(`dbg — Node.js debugger CLI for AI agents
+	console.log(`dbg — Debugger CLI for AI agents
 
 Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
+    [--dsym <path>] [--source-map <from>:<to>]
   attach <pid|ws-url|port>         Attach to running process
   stop                             Kill process + daemon
   sessions [--cleanup]             List active sessions
@@ -230,7 +231,7 @@ Inspection:
   state [-v|-s|-b|-c]              Debug state snapshot
     [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
   vars [name...]                   Show local variables
-    [--frame @fN] [--all-scopes]
+    [--frame @fN] [--all-scopes] [--all]
   stack [--async-depth N]          Show call stack
     [--generated] [--filter <keyword>]
   eval <expression>                Evaluate expression
@@ -290,7 +291,7 @@ Global flags:
 }
 
 function printHelpAgent(): void {
-	console.log(`dbg — Node.js debugger CLI for AI agents
+	console.log(`dbg — Debugger CLI for AI agents
 
 CORE LOOP:
   1. dbg launch --brk "node app.js"    → pauses at first line, returns state
@@ -324,7 +325,7 @@ BREAKPOINTS:
 
 INSPECTION:
   dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
-  dbg vars [name...] [--frame @fN] [--all-scopes]
+  dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
   dbg stack [--async-depth N] [--generated] [--filter <keyword>]
   dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
   dbg props @ref [--own] [--depth N] [--private] [--internal]
