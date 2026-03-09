@@ -369,52 +369,6 @@ nav .container {
 .runtime-badge.supported { color: var(--accent); background: var(--accent-bg); }
 .runtime-badge.planned { color: var(--yellow); background: rgba(251, 191, 36, 0.08); }
 
-/* --- Commands --- */
-.commands-tabs {
-  display: flex;
-  gap: 0;
-  margin-bottom: 0;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-  -webkit-overflow-scrolling: touch;
-}
-.cmd-tab {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--text-dim);
-  background: none;
-  border: none;
-  padding: 0.75rem 1.25rem;
-  cursor: pointer;
-  white-space: nowrap;
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-  margin-bottom: -1px;
-}
-.cmd-tab:hover { color: var(--text); }
-.cmd-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.cmd-panel {
-  display: none;
-  padding: var(--space-md) 0;
-}
-.cmd-panel.active { display: block; }
-.cmd-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-.cmd-item {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--text-bright);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  padding: 0.4rem 0.85rem;
-  border-radius: 4px;
-  transition: border-color 0.15s, background 0.15s;
-}
-.cmd-item:hover { border-color: var(--border-bright); background: var(--bg-surface); }
 
 /* --- Example session --- */
 .terminal {
@@ -885,76 +839,94 @@ footer {
     <h2 class="section-title reveal">30+ commands, zero ambiguity</h2>
     <p class="section-desc reveal">Each command does one thing. Every error suggests the next valid command.</p>
 
-    <div class="reveal">
-      <div class="commands-tabs" role="tablist">
-        <button class="cmd-tab active" onclick="switchTab(this, 'tab-session')" role="tab">Session</button>
-        <button class="cmd-tab" onclick="switchTab(this, 'tab-execution')" role="tab">Execution</button>
-        <button class="cmd-tab" onclick="switchTab(this, 'tab-inspection')" role="tab">Inspection</button>
-        <button class="cmd-tab" onclick="switchTab(this, 'tab-breakpoints')" role="tab">Breakpoints</button>
-        <button class="cmd-tab" onclick="switchTab(this, 'tab-mutation')" role="tab">Mutation</button>
-        <button class="cmd-tab" onclick="switchTab(this, 'tab-blackbox')" role="tab">Blackbox</button>
+    <div class="terminal reveal" style="max-width: 720px;">
+      <div class="terminal-bar">
+        <span class="terminal-bar-dot"></span>
+        <span class="terminal-bar-dot"></span>
+        <span class="terminal-bar-dot"></span>
       </div>
+      <div class="terminal-body"><span class="t-prompt">&gt;</span> <span class="t-cmd">dbg</span> <span class="t-flag">--help</span>
 
-      <div class="cmd-panel active" id="tab-session">
-        <div class="cmd-list">
-          <span class="cmd-item">launch</span>
-          <span class="cmd-item">attach</span>
-          <span class="cmd-item">stop</span>
-          <span class="cmd-item">status</span>
-          <span class="cmd-item">sessions</span>
-        </div>
-      </div>
-      <div class="cmd-panel" id="tab-execution">
-        <div class="cmd-list">
-          <span class="cmd-item">continue</span>
-          <span class="cmd-item">step over</span>
-          <span class="cmd-item">step into</span>
-          <span class="cmd-item">step out</span>
-          <span class="cmd-item">pause</span>
-          <span class="cmd-item">run-to</span>
-          <span class="cmd-item">restart-frame</span>
-        </div>
-      </div>
-      <div class="cmd-panel" id="tab-inspection">
-        <div class="cmd-list">
-          <span class="cmd-item">state</span>
-          <span class="cmd-item">vars</span>
-          <span class="cmd-item">stack</span>
-          <span class="cmd-item">eval</span>
-          <span class="cmd-item">props</span>
-          <span class="cmd-item">source</span>
-          <span class="cmd-item">scripts</span>
-          <span class="cmd-item">search</span>
-          <span class="cmd-item">console</span>
-          <span class="cmd-item">exceptions</span>
-        </div>
-      </div>
-      <div class="cmd-panel" id="tab-breakpoints">
-        <div class="cmd-list">
-          <span class="cmd-item">break</span>
-          <span class="cmd-item">break-rm</span>
-          <span class="cmd-item">break-ls</span>
-          <span class="cmd-item">break-toggle</span>
-          <span class="cmd-item">breakable</span>
-          <span class="cmd-item">logpoint</span>
-          <span class="cmd-item">catch</span>
-          <span class="cmd-item">break-fn</span>
-        </div>
-      </div>
-      <div class="cmd-panel" id="tab-mutation">
-        <div class="cmd-list">
-          <span class="cmd-item">set</span>
-          <span class="cmd-item">set-return</span>
-          <span class="cmd-item">hotpatch</span>
-        </div>
-      </div>
-      <div class="cmd-panel" id="tab-blackbox">
-        <div class="cmd-list">
-          <span class="cmd-item">blackbox</span>
-          <span class="cmd-item">blackbox-ls</span>
-          <span class="cmd-item">blackbox-rm</span>
-        </div>
-      </div>
+<span class="t-output">dbg — Node.js debugger CLI for AI agents</span>
+
+<span class="t-output">Usage: dbg &lt;command&gt; [options]</span>
+
+<span class="t-comment">Session:</span>
+  <span class="t-cmd">launch</span> <span class="t-flag">[--brk]</span> <span class="t-file">&lt;command...&gt;</span>      <span class="t-output">Start + attach debugger</span>
+    <span class="t-flag">[--dsym &lt;path&gt;] [--source-map &lt;from&gt;:&lt;to&gt;]</span>
+  <span class="t-cmd">attach</span> <span class="t-file">&lt;pid|ws-url|port&gt;</span>         <span class="t-output">Attach to running process</span>
+  <span class="t-cmd">stop</span>                             <span class="t-output">Kill process + daemon</span>
+  <span class="t-cmd">sessions</span> <span class="t-flag">[--cleanup]</span>             <span class="t-output">List active sessions</span>
+  <span class="t-cmd">status</span>                           <span class="t-output">Session info</span>
+
+<span class="t-comment">Execution (returns state automatically):</span>
+  <span class="t-cmd">continue</span>                         <span class="t-output">Resume execution</span>
+  <span class="t-cmd">step</span> <span class="t-flag">[over|into|out]</span>             <span class="t-output">Step one statement</span>
+  <span class="t-cmd">run-to</span> <span class="t-file">&lt;file&gt;:&lt;line&gt;</span>             <span class="t-output">Continue to location</span>
+  <span class="t-cmd">pause</span>                            <span class="t-output">Interrupt running process</span>
+  <span class="t-cmd">restart-frame</span> <span class="t-ref">[@fN]</span>              <span class="t-output">Re-execute frame from beginning</span>
+
+<span class="t-comment">Inspection:</span>
+  <span class="t-cmd">state</span> <span class="t-flag">[-v|-s|-b|-c]</span>              <span class="t-output">Debug state snapshot</span>
+    <span class="t-flag">[--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]</span>
+  <span class="t-cmd">vars</span> <span class="t-flag">[name...]</span>                   <span class="t-output">Show local variables</span>
+    <span class="t-flag">[--frame @fN] [--all-scopes]</span>
+  <span class="t-cmd">stack</span> <span class="t-flag">[--async-depth N]</span>          <span class="t-output">Show call stack</span>
+    <span class="t-flag">[--generated] [--filter &lt;keyword&gt;]</span>
+  <span class="t-cmd">eval</span> <span class="t-str">&lt;expression&gt;</span>                <span class="t-output">Evaluate expression</span>
+    <span class="t-flag">[--frame @fN] [--silent] [--timeout MS] [--side-effect-free]</span>
+  <span class="t-cmd">props</span> <span class="t-ref">&lt;@ref&gt;</span>                     <span class="t-output">Expand object properties</span>
+    <span class="t-flag">[--own] [--depth N] [--private] [--internal]</span>
+  <span class="t-cmd">source</span> <span class="t-flag">[--lines N]</span>               <span class="t-output">Show source code</span>
+    <span class="t-flag">[--file &lt;path&gt;] [--all] [--generated]</span>
+  <span class="t-cmd">search</span> <span class="t-str">&lt;query&gt;</span>                   <span class="t-output">Search loaded scripts</span>
+    <span class="t-flag">[--regex] [--case-sensitive] [--file &lt;id&gt;]</span>
+  <span class="t-cmd">scripts</span> <span class="t-flag">[--filter &lt;pattern&gt;]</span>     <span class="t-output">List loaded scripts</span>
+  <span class="t-cmd">modules</span> <span class="t-flag">[--filter &lt;pattern&gt;]</span>     <span class="t-output">List loaded modules/libraries (DAP only)</span>
+  <span class="t-cmd">console</span> <span class="t-flag">[--since N] [--level]</span>    <span class="t-output">Console output</span>
+    <span class="t-flag">[--clear]</span>
+  <span class="t-cmd">exceptions</span> <span class="t-flag">[--since N]</span>           <span class="t-output">Captured exceptions</span>
+
+<span class="t-comment">Breakpoints:</span>
+  <span class="t-cmd">break</span> <span class="t-file">&lt;file&gt;:&lt;line&gt;</span>              <span class="t-output">Set breakpoint</span>
+    <span class="t-flag">[--condition &lt;expr&gt;] [--hit-count &lt;n&gt;] [--continue] [--pattern &lt;regex&gt;:&lt;line&gt;]</span>
+  <span class="t-cmd">break-rm</span> <span class="t-ref">&lt;BP#|all&gt;</span>               <span class="t-output">Remove breakpoint</span>
+  <span class="t-cmd">break-ls</span>                         <span class="t-output">List breakpoints</span>
+  <span class="t-cmd">break-toggle</span> <span class="t-ref">&lt;BP#|all&gt;</span>           <span class="t-output">Enable/disable breakpoints</span>
+  <span class="t-cmd">breakable</span> <span class="t-file">&lt;file&gt;:&lt;start&gt;-&lt;end&gt;</span>   <span class="t-output">List valid breakpoint locations</span>
+  <span class="t-cmd">logpoint</span> <span class="t-file">&lt;file&gt;:&lt;line&gt;</span> <span class="t-str">&lt;tpl&gt;</span>     <span class="t-output">Set logpoint</span>
+    <span class="t-flag">[--condition &lt;expr&gt;]</span>
+  <span class="t-cmd">catch</span> <span class="t-flag">[all|uncaught|caught|none]</span> <span class="t-output">Pause on exceptions</span>
+
+<span class="t-comment">Mutation:</span>
+  <span class="t-cmd">set</span> <span class="t-ref">&lt;@ref|name&gt;</span> <span class="t-str">&lt;value&gt;</span>          <span class="t-output">Change variable value</span>
+  <span class="t-cmd">set-return</span> <span class="t-str">&lt;value&gt;</span>               <span class="t-output">Change return value (at return point)</span>
+  <span class="t-cmd">hotpatch</span> <span class="t-file">&lt;file&gt;</span> <span class="t-flag">[--dry-run]</span>      <span class="t-output">Live-edit script source</span>
+
+<span class="t-comment">Blackboxing:</span>
+  <span class="t-cmd">blackbox</span> <span class="t-file">&lt;pattern...&gt;</span>            <span class="t-output">Skip stepping into matching scripts</span>
+  <span class="t-cmd">blackbox-ls</span>                      <span class="t-output">List current patterns</span>
+  <span class="t-cmd">blackbox-rm</span> <span class="t-file">&lt;pattern|all&gt;</span>        <span class="t-output">Remove patterns</span>
+
+<span class="t-comment">Source Maps:</span>
+  <span class="t-cmd">sourcemap</span> <span class="t-flag">[file]</span>                 <span class="t-output">Show source map info</span>
+  <span class="t-cmd">sourcemap</span> <span class="t-flag">--disable</span>              <span class="t-output">Disable resolution globally</span>
+
+<span class="t-comment">Setup:</span>
+  <span class="t-cmd">install</span> <span class="t-file">&lt;adapter&gt;</span>                <span class="t-output">Download managed adapter binary</span>
+  <span class="t-cmd">install</span> <span class="t-flag">--list</span>                   <span class="t-output">Show installed adapters</span>
+
+<span class="t-comment">Diagnostics:</span>
+  <span class="t-cmd">logs</span> <span class="t-flag">[-f|--follow]</span>               <span class="t-output">Show CDP protocol log</span>
+    <span class="t-flag">[--limit N] [--domain &lt;name&gt;] [--clear]</span>
+
+<span class="t-comment">Global flags:</span>
+  <span class="t-flag">--session NAME</span>                   <span class="t-output">Target session (default: "default")</span>
+  <span class="t-flag">--json</span>                           <span class="t-output">JSON output</span>
+  <span class="t-flag">--color</span>                          <span class="t-output">ANSI colors</span>
+  <span class="t-flag">--help-agent</span>                     <span class="t-output">LLM reference card</span>
+  <span class="t-flag">--help</span>                           <span class="t-output">Show this help</span>
+  <span class="t-flag">--version</span>                        <span class="t-output">Show version</span></div>
     </div>
   </div>
 </section>
@@ -1061,13 +1033,6 @@ function copyInstall(el, text) {
   });
 }
 
-// Tab switching
-function switchTab(btn, panelId) {
-  btn.parentElement.querySelectorAll('.cmd-tab').forEach(t => t.classList.remove('active'));
-  btn.classList.add('active');
-  document.querySelectorAll('.cmd-panel').forEach(p => p.classList.remove('active'));
-  document.getElementById(panelId).classList.add('active');
-}
 
 // Scroll reveal
 const observer = new IntersectionObserver((entries) => {
