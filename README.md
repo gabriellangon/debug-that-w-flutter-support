@@ -3,7 +3,7 @@
 Debugger CLI built for AI agents. Fast, token-efficient, no fluff.
 
 <p align="center">
-  <img src="docs/demo-2x.gif" alt="debug-that demo" />
+  <img src="docs/demo.gif" alt="debug-that demo" />
 </p>
 
 **Why?** Agents waste tokens on print-debugging. A real debugger gives precise state inspection in minimal output — variables, stack, breakpoints — all via short `@ref` handles.
