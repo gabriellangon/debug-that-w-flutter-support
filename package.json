@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",
+    "better-sqlite3": "^12.6.2",
     "zod": "^4.0.0"
   },
   "module": "index.ts"
