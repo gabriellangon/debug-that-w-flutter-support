@@ -14,9 +14,9 @@ describe("Source map integration", () => {
 
 	test("setBreakpoint on .ts file works via source map translation", () =>
 		withPausedSession("test-sm-break", "tests/fixtures/ts-app/dist/app.js", async (session) => {
-			const bp = await session.setBreakpoint("app.ts", 13);
+			const bp = await session.setBreakpoint("app.ts", 17);
 			expect(bp.location.url).toContain("app.ts");
-			expect(bp.location.line).toBe(13);
+			expect(bp.location.line).toBe(17);
 			await session.continue();
 			await session.waitForState("paused");
 			expect(session.sessionState).toBe("paused");

@@ -10,6 +10,7 @@ registerCommand("launch", async (args) => {
 	const port = parseIntFlag(args.flags, "port");
 	const timeout = parseIntFlag(args.flags, "timeout");
 	const runtime = typeof args.flags.runtime === "string" ? args.flags.runtime : undefined;
+	const device = typeof args.flags.device === "string" ? args.flags.device : undefined;
 
 	// Reconstruct the full command from subcommand + positionals.
 	// The parser treats the second non-flag word as subcommand, but for launch
@@ -29,7 +30,7 @@ registerCommand("launch", async (args) => {
 
 	// Send launch command to daemon
 	const client = new DaemonClient(session);
-	const response = await client.request("launch", { command, brk, port, runtime });
+	const response = await client.request("launch", { command, brk, port, runtime, device });
 
 	if (!response.ok) {
 		console.error(`${response.error}`);

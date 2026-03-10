@@ -36,3 +36,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # DAP test fixture build artifacts
 tests/fixtures/dap/hello
 tests/fixtures/dap/*.dSYM
+!tests/fixtures/ts-app/dist/
+!tests/fixtures/ts-app/dist/app.js
+!tests/fixtures/ts-app/dist/app.js.map

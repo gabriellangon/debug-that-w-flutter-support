@@ -1,10 +1,12 @@
+import { existsSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { DapSession } from "../../../src/dap/session.ts";
 
+const BREW_LLDB_DAP = "/opt/homebrew/opt/llvm/bin/lldb-dap";
 const HAS_LLDB =
 	Bun.spawnSync(["which", "lldb-dap"]).exitCode === 0 ||
-	Bun.spawnSync(["/opt/homebrew/opt/llvm/bin/lldb-dap", "--version"]).exitCode === 0;
+	(existsSync(BREW_LLDB_DAP) && Bun.spawnSync([BREW_LLDB_DAP, "--version"]).exitCode === 0);
 
 const HELLO_BINARY = "tests/fixtures/dap/hello";
 const HELLO_SOURCE = resolve("tests/fixtures/dap/hello.c");

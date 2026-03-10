@@ -214,8 +214,8 @@ Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
-    [--dsym <path>] [--source-map <from>:<to>]
-  attach <pid|ws-url|port>         Attach to running process
+    [--device <id>] [--dsym <path>] [--source-map <from>:<to>]
+  attach <pid|ws-url|port>         Attach to running process / VM service
   stop                             Kill process + daemon
   sessions [--cleanup]             List active sessions
   status                           Session info
@@ -354,5 +354,10 @@ DIAGNOSTICS:
   dbg logs [-f|--follow]        Show CDP protocol log
   dbg logs --limit 100          Show last N entries (default: 50)
   dbg logs --domain Debugger    Filter by CDP domain
-  dbg logs --clear              Clear the log file`);
+  dbg logs --clear              Clear the log file
+
+DART / FLUTTER:
+  dbg launch --brk --runtime dart bin/main.dart
+  dbg launch --brk --runtime flutter lib/main.dart --device macos
+  dbg attach --runtime dart ws://127.0.0.1:12345/abc=/ws`);
 }

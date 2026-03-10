@@ -18,12 +18,14 @@ Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browse
 | Node.js + tsx/ts-node | TypeScript | Supported | V8 Inspector (CDP) + Source Maps |
 | Bun | JavaScript / TypeScript | Supported | WebKit Inspector (JSC) |
 | LLDB | C / C++ / Rust / Swift | Supported | DAP (Debug Adapter Protocol) |
+| Dart | Dart | Supported | DAP |
+| Flutter | Dart / Flutter | Supported (baseline) | DAP |
 | Deno | JavaScript / TypeScript | Planned | V8 Inspector (CDP) |
 | Python (debugpy) | Python | Supported | DAP |
 | Go (delve) | Go | Planned | DAP |
 | Java (JDWP) | Java / Kotlin | Planned | DAP |
 
-dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter. For native languages, use `--runtime lldb` to select the DAP adapter.
+dbg auto-detects the runtime for JavaScript launches. For DAP-based runtimes such as LLDB, Dart, Flutter, and debugpy, use `--runtime`.
 
 ## Install
 
@@ -84,6 +86,15 @@ dbg launch --brk bun app.ts
 # C/C++ (via LLDB)
 dbg launch --brk --runtime lldb ./my_program
 
+# Dart
+dbg launch --brk --runtime dart bin/main.dart
+
+# Flutter (default device or specify one with --device)
+dbg launch --brk --runtime flutter lib/main.dart --device macos
+
+# Attach to a running Dart/Flutter VM service
+dbg attach --runtime dart ws://127.0.0.1:12345/abc=/ws
+
 # Attach to a running process (any runtime with --inspect)
 dbg attach 9229
 
@@ -98,6 +109,8 @@ dbg set @v1 100
 dbg hotpatch src/handler.ts   # live-edit from disk (JS/TS only)
 dbg stop
 ```
+
+For Flutter launches, `--device <id>` is forwarded as `flutter -d <id>`. For Dart/Flutter attach, use the full VM Service URL instead of a PID.
 
 ## Commands
 
@@ -120,8 +133,8 @@ Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
-    [--dsym <path>] [--source-map <from>:<to>]
-  attach <pid|ws-url|port>         Attach to running process
+    [--device <id>] [--dsym <path>] [--source-map <from>:<to>]
+  attach <pid|ws-url|port>         Attach to running process / VM service
   stop                             Kill process + daemon
   sessions [--cleanup]             List active sessions
   status                           Session info
@@ -219,4 +232,4 @@ CLI (stateless)  -->  Unix socket IPC  -->  Daemon (per session)
 
 The daemon manages two session types:
 - **DebugSession** (CDP) — for JavaScript runtimes (Node.js, Bun). Uses `RuntimeAdapter` to handle protocol differences between V8 and JSC.
-- **DapSession** (DAP) — for native debuggers (LLDB, etc.). Communicates with a debug adapter over stdin/stdout using the Debug Adapter Protocol.
+- **DapSession** (DAP) — for DAP runtimes such as LLDB, Dart, Flutter, and Python. Communicates with a debug adapter over stdin/stdout using the Debug Adapter Protocol.

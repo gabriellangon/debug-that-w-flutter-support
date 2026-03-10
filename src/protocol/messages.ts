@@ -1,4 +1,4 @@
-import { z } from "@zod/mini";
+import { z } from "zod/mini";
 
 // ── Request schemas (one per command) ──────────────────────────────
 
@@ -11,6 +11,7 @@ const LaunchRequest = z.object({
 		brk: z.optional(z.boolean()),
 		port: z.optional(z.number()),
 		runtime: z.optional(z.string()),
+		device: z.optional(z.string()),
 	}),
 });
 

@@ -53,10 +53,10 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			return { ok: true, data: "pong" };
 
 		case "launch": {
-			const { command, brk = true, port, runtime } = req.args;
+			const { command, brk = true, port, runtime, device } = req.args;
 			if (isDapRuntime(runtime)) {
 				dapSession = new DapSession(session, runtime);
-				const result = await dapSession.launch(command, { brk });
+				const result = await dapSession.launch(command, { brk, device });
 				return { ok: true, data: result };
 			}
 			const result = await cdpSession.launch(command, { brk, port });

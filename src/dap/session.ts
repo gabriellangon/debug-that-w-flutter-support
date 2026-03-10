@@ -56,10 +56,46 @@ function resolveAdapterCommand(runtime: string): string[] {
 			const pyBin = py3.exitCode === 0 ? "python3" : "python";
 			return [pyBin, "-m", "debugpy.adapter"];
 		}
+		case "dart":
+			return ["dart", "debug_adapter"];
+		case "flutter":
+			return ["flutter", "debug-adapter"];
 		default:
 			// Assume the runtime string is the adapter binary name or path
 			return [runtime];
 	}
+}
+
+function isPythonRuntime(runtime: string): boolean {
+	return runtime === "python" || runtime === "debugpy";
+}
+
+function isDartRuntime(runtime: string): boolean {
+	return runtime === "dart";
+}
+
+function isFlutterRuntime(runtime: string): boolean {
+	return runtime === "flutter";
+}
+
+function isVmServiceTarget(target: string): boolean {
+	return /^https?:\/\//.test(target) || /^wss?:\/\//.test(target);
+}
+
+function normalizeRuntimeCommand(runtime: string, command: string[]): string[] {
+	if (command.length <= 1) {
+		return command;
+	}
+
+	const binary = command[0]?.split("/").pop();
+	if (isDartRuntime(runtime) && binary === "dart") {
+		return command.slice(1);
+	}
+	if (isFlutterRuntime(runtime) && binary === "flutter") {
+		return command.slice(1);
+	}
+
+	return command;
 }
 
 interface DapBreakpointEntry {
@@ -107,6 +143,7 @@ export class DapSession {
 	private _consoleMessages: ConsoleMessage[] = [];
 	private _exceptionEntries: ExceptionEntry[] = [];
 	private capabilities: DebugProtocol.Capabilities = {};
+	private initialized = false;
 
 	// Breakpoints: DAP requires sending ALL breakpoints per file at once
 	private breakpoints = new Map<string, DapBreakpointEntry[]>();
@@ -127,7 +164,13 @@ export class DapSession {
 
 	async launch(
 		command: string[],
-		options: { brk?: boolean; port?: number; program?: string; args?: string[] } = {},
+		options: {
+			brk?: boolean;
+			port?: number;
+			program?: string;
+			args?: string[];
+			device?: string;
+		} = {},
 	): Promise<LaunchResult> {
 		if (this._state !== "idle") {
 			throw new Error("Session already has an active debug target");
@@ -140,19 +183,40 @@ export class DapSession {
 		await this.initializeAdapter();
 
 		// Build launch arguments. The exact schema depends on the adapter.
-		const program = options.program ?? command[0];
-		const programArgs = options.args ?? command.slice(1);
+		const normalizedCommand = normalizeRuntimeCommand(this._runtime, command);
+		const program = options.program ?? normalizedCommand[0];
+		const programArgs = options.args ?? normalizedCommand.slice(1);
+		if (!program) {
+			throw new Error("No program specified for DAP launch.");
+		}
 		const launchArgs: Record<string, unknown> = {
 			program,
 			args: programArgs,
-			stopOnEntry: options.brk ?? true,
 			cwd: process.cwd(),
 		};
 
 		// Runtime-specific launch arguments
-		if (this._runtime === "python" || this._runtime === "debugpy") {
+		if (isPythonRuntime(this._runtime)) {
+			launchArgs.stopOnEntry = options.brk ?? true;
 			launchArgs.console = "internalConsole";
 			launchArgs.justMyCode = false;
+		} else if (isDartRuntime(this._runtime)) {
+			if (options.brk !== false) {
+				launchArgs.toolArgs = ["--pause-isolates-on-start"];
+			}
+		} else if (isFlutterRuntime(this._runtime)) {
+			const toolArgs: string[] = [];
+			if (options.device) {
+				toolArgs.push("-d", options.device);
+			}
+			if (options.brk !== false) {
+				toolArgs.push("--start-paused");
+			}
+			if (toolArgs.length > 0) {
+				launchArgs.toolArgs = toolArgs;
+			}
+		} else {
+			launchArgs.stopOnEntry = options.brk ?? true;
 		}
 
 		// DAP spec: some adapters (e.g. debugpy) defer the launch response until
@@ -192,11 +256,7 @@ export class DapSession {
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
-		// Parse target: could be a PID or a process name
-		const pid = parseInt(target, 10);
-		const attachArgs: Record<string, unknown> = Number.isNaN(pid)
-			? { program: target, waitFor: true }
-			: { pid };
+		const attachArgs = this.buildAttachArgs(target);
 
 		const attachPromise = this.dap.send("attach", attachArgs);
 		await this.waitForInitialized();
@@ -214,6 +274,25 @@ export class DapSession {
 		}
 
 		return { wsUrl: `dap://${this._runtime}/${target}` };
+	}
+
+	private buildAttachArgs(target: string): Record<string, unknown> {
+		if (isDartRuntime(this._runtime) || isFlutterRuntime(this._runtime)) {
+			if (!isVmServiceTarget(target)) {
+				throw new Error(
+					`Attach for ${this._runtime} requires a VM Service URL (for example ws://127.0.0.1:12345/abc=/ws).`,
+				);
+			}
+
+			return {
+				vmServiceUri: target,
+				cwd: process.cwd(),
+			};
+		}
+
+		// Parse target: could be a PID or a process name
+		const pid = parseInt(target, 10);
+		return Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
 	}
 
 	getStatus(): SessionStatus {
@@ -1035,6 +1114,10 @@ export class DapSession {
 	private setupEventHandlers(): void {
 		const dap = this.getDap();
 
+		dap.on("initialized", () => {
+			this.initialized = true;
+		});
+
 		dap.on("stopped", (body: unknown) => {
 			const event = body as {
 				reason: string;
@@ -1043,6 +1126,18 @@ export class DapSession {
 				text?: string;
 				allThreadsStopped?: boolean;
 			};
+
+			if (event.reason === "exit") {
+				this._state = "idle";
+				this._pauseInfo = null;
+				this._stackFrames = [];
+				this.refs.clearVolatile();
+				if (this.stoppedWaiter) {
+					this.stoppedWaiter.resolve();
+					this.stoppedWaiter = null;
+				}
+				return;
+			}
 
 			this._state = "paused";
 			if (event.threadId !== undefined) {
@@ -1257,6 +1352,9 @@ export class DapSession {
 	 */
 	private async waitForInitialized(): Promise<void> {
 		const dap = this.getDap();
+		if (this.initialized) {
+			return;
+		}
 		return new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				dap.off("initialized", handler);
