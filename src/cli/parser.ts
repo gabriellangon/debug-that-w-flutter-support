@@ -2,6 +2,8 @@ import { registry } from "./registry.ts";
 import type { GlobalFlags, ParsedArgs } from "./types.ts";
 
 const GLOBAL_FLAGS = new Set(["session", "json", "color", "help-agent", "help", "version"]);
+const REPEATABLE_VALUE_FLAGS = new Set(["tool-arg"]);
+const VALUE_FLAGS_ALLOW_LEADING_DASH = new Set(["tool-arg"]);
 const BOOLEAN_FLAGS = new Set([
 	"json",
 	"color",
@@ -36,13 +38,56 @@ const BOOLEAN_FLAGS = new Set([
 	"version",
 ]);
 
+function setLongFlag(
+	flags: Record<string, string | boolean | string[]>,
+	key: string,
+	next: string | undefined,
+): number {
+	if (BOOLEAN_FLAGS.has(key)) {
+		flags[key] = true;
+		return 0;
+	}
+
+	const canUseNext =
+		next !== undefined && (VALUE_FLAGS_ALLOW_LEADING_DASH.has(key) || !next.startsWith("-"));
+
+	if (!canUseNext) {
+		flags[key] = true;
+		return 0;
+	}
+
+	if (REPEATABLE_VALUE_FLAGS.has(key)) {
+		const existing = flags[key];
+		const values = Array.isArray(existing)
+			? [...existing, next]
+			: typeof existing === "string"
+				? [existing, next]
+				: [next];
+		flags[key] = values;
+	} else {
+		flags[key] = next;
+	}
+
+	return 1;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
-	const flags: Record<string, string | boolean> = {};
+	const flags: Record<string, string | boolean | string[]> = {};
 	const positionals: string[] = [];
 	let command = "";
 	let subcommand: string | null = null;
 
 	let i = 0;
+
+	// Accept leading global flags before the command, e.g. "dbg --session foo status".
+	while (i < argv.length) {
+		const arg = argv[i];
+		if (arg === undefined) break;
+		if (!arg.startsWith("--")) break;
+		const key = arg.slice(2);
+		if (!GLOBAL_FLAGS.has(key)) break;
+		i += 1 + setLongFlag(flags, key, argv[i + 1]);
+	}
 
 	// Extract command (first non-flag argument)
 	while (i < argv.length) {
@@ -80,17 +125,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 		if (arg.startsWith("--")) {
 			const key = arg.slice(2);
-			if (BOOLEAN_FLAGS.has(key)) {
-				flags[key] = true;
-			} else {
-				const next = argv[i + 1];
-				if (next !== undefined && !next.startsWith("-")) {
-					flags[key] = next;
-					i++;
-				} else {
-					flags[key] = true;
-				}
-			}
+			i += setLongFlag(flags, key, argv[i + 1]);
 		} else if (arg.startsWith("-") && arg.length === 2) {
 			// Short flags
 			const key = arg.slice(1);
@@ -214,8 +249,9 @@ Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
-    [--device <id>] [--dsym <path>] [--source-map <from>:<to>]
-  attach <pid|ws-url|port>         Attach to running process / VM service
+    [--device <id>] [--tool-arg <arg>] [--runtime <name>] [--dsym <path>] [--source-map <from>:<to>]
+  attach [pid|ws-url|port]         Attach to running process / VM service
+    [--runtime flutter]            Omit target to let Flutter discover a running app
   stop                             Kill process + daemon
   sessions [--cleanup]             List active sessions
   status                           Session info
@@ -357,7 +393,9 @@ DIAGNOSTICS:
   dbg logs --clear              Clear the log file
 
 DART / FLUTTER:
-  dbg launch --brk --runtime dart bin/main.dart
-  dbg launch --brk --runtime flutter lib/main.dart --device macos
-  dbg attach --runtime dart ws://127.0.0.1:12345/abc=/ws`);
+  dbg launch --brk dart bin/main.dart
+  dbg launch --brk flutter lib/main.dart --tool-arg -d --tool-arg macos
+  dbg launch --brk python app.py
+  dbg attach ws://127.0.0.1:12345/abc=/ws
+  dbg attach --runtime flutter`);
 }

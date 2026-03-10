@@ -1,5 +1,6 @@
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import type { Subprocess } from "bun";
+import { appendFileSync } from "node:fs";
 
 import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 
@@ -24,6 +25,7 @@ export class DapClient {
 	private listeners = new Map<string, Set<AnyHandler>>();
 	private isConnected = false;
 	private buffer = "";
+	private traceFile = process.env.DEBUG_THAT_DAP_TRACE_FILE;
 
 	private constructor(proc: Subprocess<"pipe", "pipe", "pipe">) {
 		this.proc = proc;
@@ -66,6 +68,7 @@ export class DapClient {
 		if (args !== undefined) {
 			request.arguments = args;
 		}
+		this.trace("send", request);
 
 		return new Promise<DebugProtocol.Response>((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -214,6 +217,7 @@ export class DapClient {
 		}
 
 		if (parsed.type === "response") {
+			this.trace("recv", parsed);
 			const response = parsed as DebugProtocol.Response;
 			const pending = this.pending.get(response.request_seq);
 			if (!pending) return;
@@ -228,6 +232,7 @@ export class DapClient {
 				pending.resolve(response);
 			}
 		} else if (parsed.type === "event") {
+			this.trace("recv", parsed);
 			const event = parsed as DebugProtocol.Event;
 			const handlers = this.listeners.get(event.event);
 			if (handlers) {
@@ -247,6 +252,22 @@ export class DapClient {
 			}
 		} catch {
 			// Ignore
+		}
+	}
+
+	private trace(direction: "send" | "recv", message: DebugProtocol.ProtocolMessage): void {
+		if (!this.traceFile) {
+			return;
+		}
+
+		try {
+			appendFileSync(
+				this.traceFile,
+				`${new Date().toISOString()} ${direction} ${JSON.stringify(message)}\n`,
+				"utf8",
+			);
+		} catch {
+			// Ignore trace failures.
 		}
 	}
 }

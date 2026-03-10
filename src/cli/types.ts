@@ -7,11 +7,13 @@ export interface GlobalFlags {
 	version: boolean;
 }
 
+export type FlagValue = string | boolean | string[];
+
 export interface ParsedArgs {
 	command: string;
 	subcommand: string | null;
 	positionals: string[];
-	flags: Record<string, string | boolean>;
+	flags: Record<string, FlagValue>;
 	global: GlobalFlags;
 }
 

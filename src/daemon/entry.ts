@@ -53,10 +53,10 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			return { ok: true, data: "pong" };
 
 		case "launch": {
-			const { command, brk = true, port, runtime, device } = req.args;
+			const { command, brk = true, port, runtime, device, toolArgs } = req.args;
 			if (isDapRuntime(runtime)) {
 				dapSession = new DapSession(session, runtime);
-				const result = await dapSession.launch(command, { brk, device });
+				const result = await dapSession.launch(command, { brk, device, toolArgs });
 				return { ok: true, data: result };
 			}
 			const result = await cdpSession.launch(command, { brk, port });
@@ -64,11 +64,14 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		}
 
 		case "attach": {
-			const { target, runtime } = req.args;
+			const { target, runtime, toolArgs } = req.args;
 			if (isDapRuntime(runtime)) {
 				dapSession = new DapSession(session, runtime);
-				const result = await dapSession.attach(target);
+				const result = await dapSession.attach(target, { toolArgs });
 				return { ok: true, data: result };
+			}
+			if (!target) {
+				throw new Error("No attach target specified.");
 			}
 			const result = await cdpSession.attach(target);
 			return { ok: true, data: result };

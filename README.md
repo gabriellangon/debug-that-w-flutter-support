@@ -25,7 +25,7 @@ Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browse
 | Go (delve) | Go | Planned | DAP |
 | Java (JDWP) | Java / Kotlin | Planned | DAP |
 
-dbg auto-detects the runtime for JavaScript launches. For DAP-based runtimes such as LLDB, Dart, Flutter, and debugpy, use `--runtime`.
+dbg auto-detects launch runtimes for JavaScript, Dart, Flutter, and Python when invoked as `node`, `bun`, `dart`, `flutter`, or `python`. Use `--runtime` when you need to force a specific adapter such as `lldb`.
 
 ## Install
 
@@ -87,13 +87,19 @@ dbg launch --brk bun app.ts
 dbg launch --brk --runtime lldb ./my_program
 
 # Dart
-dbg launch --brk --runtime dart bin/main.dart
+dbg launch --brk dart bin/main.dart
 
-# Flutter (default device or specify one with --device)
-dbg launch --brk --runtime flutter lib/main.dart --device macos
+# Flutter (default device or pass repeated tool args)
+dbg launch --brk flutter lib/main.dart --tool-arg -d --tool-arg macos --tool-arg --flavor --tool-arg dev
+
+# Python
+dbg launch --brk python app.py
 
 # Attach to a running Dart/Flutter VM service
-dbg attach --runtime dart ws://127.0.0.1:12345/abc=/ws
+dbg attach ws://127.0.0.1:12345/abc=/ws
+
+# Let Flutter discover a running app to attach to
+dbg attach --runtime flutter
 
 # Attach to a running process (any runtime with --inspect)
 dbg attach 9229
@@ -110,7 +116,7 @@ dbg hotpatch src/handler.ts   # live-edit from disk (JS/TS only)
 dbg stop
 ```
 
-For Flutter launches, `--device <id>` is forwarded as `flutter -d <id>`. For Dart/Flutter attach, use the full VM Service URL instead of a PID.
+For Flutter launches, repeat `--tool-arg` for each raw tool flag you want forwarded to `flutter run`. `--device <id>` remains available as a shorthand for `-d <id>`. Dart attach still expects a full VM Service URL; Flutter attach can either use a VM Service URL or omit the target and let the Flutter adapter discover a running app.
 
 ## Commands
 

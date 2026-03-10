@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { basename, isAbsolute, resolve } from "node:path";
 import type { Subprocess } from "bun";
 import type Protocol from "devtools-protocol/types/protocol.js";
 import { CdpClient } from "../cdp/client.ts";
@@ -138,6 +140,40 @@ export interface SessionStatus {
 	lastException?: { text: string; description?: string };
 }
 
+function resolveRuntimeBinary(binary: string): string {
+	if (isAbsolute(binary) || binary.includes("/")) {
+		return binary;
+	}
+
+	if (binary === "bun" || binary === "bunx") {
+		const currentExecutable = process.execPath;
+		if (basename(currentExecutable) === "bun" && existsSync(currentExecutable)) {
+			return currentExecutable;
+		}
+
+		const home = process.env.HOME ?? process.env.USERPROFILE;
+		if (home) {
+			const userBun = resolve(home, ".bun/bin/bun");
+			if (existsSync(userBun)) {
+				return userBun;
+			}
+		}
+	}
+
+	const whichResult = Bun.spawnSync(["which", binary], {
+		stdout: "pipe",
+		stderr: "ignore",
+	});
+	if (whichResult.exitCode === 0) {
+		const resolvedBinary = whichResult.stdout.toString().trim();
+		if (resolvedBinary) {
+			return resolvedBinary;
+		}
+	}
+
+	return binary;
+}
+
 // Node.js: "Debugger listening on ws://..."
 // Bun:     "  ws://localhost:PORT/ID" (on its own indented line)
 import {
@@ -221,7 +257,7 @@ export class DebugSession {
 		const inspectFlag = brk ? `--inspect-brk=${port}` : `--inspect=${port}`;
 
 		// Build the args: inject inspect flag after the runtime (first element)
-		const runtimeBin = command[0] as string;
+		const runtimeBin = resolveRuntimeBinary(command[0] as string);
 		const rest = command.slice(1);
 		const spawnArgs = [runtimeBin, inspectFlag, ...rest];
 
@@ -353,8 +389,10 @@ export class DebugSession {
 		}
 
 		if (this.state === "idle" && this.exceptionEntries.length > 0) {
-			const last = this.exceptionEntries[this.exceptionEntries.length - 1]!;
-			status.lastException = { text: last.text, description: last.description };
+			const last = this.exceptionEntries[this.exceptionEntries.length - 1];
+			if (last) {
+				status.lastException = { text: last.text, description: last.description };
+			}
 		}
 
 		return status;

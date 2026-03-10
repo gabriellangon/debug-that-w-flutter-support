@@ -12,14 +12,16 @@ const LaunchRequest = z.object({
 		port: z.optional(z.number()),
 		runtime: z.optional(z.string()),
 		device: z.optional(z.string()),
+		toolArgs: z.optional(z.array(z.string())),
 	}),
 });
 
 const AttachRequest = z.object({
 	cmd: z.literal("attach"),
 	args: z.object({
-		target: z.string(),
+		target: z.optional(z.string()),
 		runtime: z.optional(z.string()),
+		toolArgs: z.optional(z.array(z.string())),
 	}),
 });
 

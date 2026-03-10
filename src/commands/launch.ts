@@ -1,4 +1,5 @@
-import { parseIntFlag } from "../cli/parse-flag.ts";
+import { inferLaunchRuntime } from "../cli/infer-runtime.ts";
+import { parseIntFlag, parseStringArrayFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
@@ -9,8 +10,9 @@ registerCommand("launch", async (args) => {
 	const brk = args.flags.brk === true;
 	const port = parseIntFlag(args.flags, "port");
 	const timeout = parseIntFlag(args.flags, "timeout");
-	const runtime = typeof args.flags.runtime === "string" ? args.flags.runtime : undefined;
+	const explicitRuntime = typeof args.flags.runtime === "string" ? args.flags.runtime : undefined;
 	const device = typeof args.flags.device === "string" ? args.flags.device : undefined;
+	const toolArgs = parseStringArrayFlag(args.flags, "tool-arg");
 
 	// Reconstruct the full command from subcommand + positionals.
 	// The parser treats the second non-flag word as subcommand, but for launch
@@ -25,12 +27,21 @@ registerCommand("launch", async (args) => {
 		return 1;
 	}
 
+	const runtime = explicitRuntime ?? inferLaunchRuntime(command);
+
 	// Ensure daemon is running — auto-cleans stale sockets if daemon is dead
 	await ensureDaemon(session, { timeout });
 
 	// Send launch command to daemon
 	const client = new DaemonClient(session);
-	const response = await client.request("launch", { command, brk, port, runtime, device });
+	const response = await client.request("launch", {
+		command,
+		brk,
+		port,
+		runtime,
+		device,
+		toolArgs,
+	});
 
 	if (!response.ok) {
 		console.error(`${response.error}`);

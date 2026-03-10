@@ -41,6 +41,13 @@ describe("parseArgs", () => {
 		expect(args.global.color).toBe(true);
 	});
 
+	test("parses leading global flags before the command", () => {
+		const args = parseArgs(["--session", "mysession", "--json", "status"]);
+		expect(args.command).toBe("status");
+		expect(args.global.session).toBe("mysession");
+		expect(args.global.json).toBe(true);
+	});
+
 	test("global flags not in flags map", () => {
 		const args = parseArgs(["state", "--json"]);
 		expect(args.flags.json).toBeUndefined();
@@ -101,5 +108,28 @@ describe("parseArgs", () => {
 		expect(args.flags.port).toBe("9229");
 		expect(args.flags.timeout).toBe("600");
 		expect(args.positionals).toEqual(["node", "app.js"]);
+	});
+
+	test("parses repeated --tool-arg values", () => {
+		const args = parseArgs([
+			"launch",
+			"--runtime",
+			"flutter",
+			"lib/main.dart",
+			"--tool-arg",
+			"-d",
+			"--tool-arg",
+			"macos",
+			"--tool-arg",
+			"--flavor",
+		]);
+		expect(args.flags["tool-arg"]).toEqual(["-d", "macos", "--flavor"]);
+	});
+
+	test("parses flutter attach without an explicit target", () => {
+		const args = parseArgs(["attach", "--runtime", "flutter"]);
+		expect(args.command).toBe("attach");
+		expect(args.subcommand).toBeNull();
+		expect(args.flags.runtime).toBe("flutter");
 	});
 });
