@@ -22,7 +22,7 @@ async function readStderrUntilInspector(stderr: ReadableStream<Uint8Array>): Pro
 describe("DebugSession integration", () => {
 	test("launch with brk pauses at first line", () =>
 		withSession("test-launch", async (session) => {
-			const result = await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
+			const result = await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
 			await session.waitForState("paused");
 			expect(result.pid).toBeGreaterThan(0);
 			expect(result.wsUrl).toMatch(/^ws:\/\//);
@@ -41,7 +41,7 @@ describe("DebugSession integration", () => {
 
 	test("getStatus returns correct info after launch", () =>
 		withSession("test-status", async (session) => {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
+			await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
 			await session.waitForState("paused");
 			const status = session.getStatus();
 			expect(status.session).toBe("test-status");
@@ -128,7 +128,7 @@ describe("DebugSession integration", () => {
 
 	test("scripts are tracked after launch", () =>
 		withSession("test-scripts", async (session) => {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
+			await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
 			await session.waitForState("paused");
 			expect(session.getStatus().scriptCount).toBeGreaterThan(0);
 		}));

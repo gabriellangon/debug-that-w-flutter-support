@@ -7,7 +7,7 @@ const HAS_DEBUGPY = (() => {
 	return result.exitCode === 0;
 })();
 
-const HELLO_SCRIPT = resolve("tests/fixtures/dap/hello.py");
+const HELLO_SCRIPT = resolve("tests/fixtures/python/hello.py");
 
 async function withDapSession(
 	name: string,

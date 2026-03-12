@@ -4,14 +4,14 @@ import { withPausedSession } from "../../helpers.ts";
 
 describe("Blackbox patterns", () => {
 	test("add blackbox patterns", () =>
-		withPausedSession("test-blackbox-add", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-blackbox-add", "tests/fixtures/js/step-app.js", async (session) => {
 			const result = await session.addBlackbox(["node_modules", "internal"]);
 			expect(result).toEqual(["node_modules", "internal"]);
 			expect(session.listBlackbox()).toEqual(["node_modules", "internal"]);
 		}));
 
 	test("list blackbox patterns", () =>
-		withPausedSession("test-blackbox-list", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-blackbox-list", "tests/fixtures/js/step-app.js", async (session) => {
 			expect(session.listBlackbox()).toEqual([]);
 			await session.addBlackbox(["node_modules", "vendor"]);
 			expect(session.listBlackbox()).toEqual(["node_modules", "vendor"]);
@@ -20,7 +20,7 @@ describe("Blackbox patterns", () => {
 	test("remove specific pattern", () =>
 		withPausedSession(
 			"test-blackbox-rm-specific",
-			"tests/fixtures/step-app.js",
+			"tests/fixtures/js/step-app.js",
 			async (session) => {
 				await session.addBlackbox(["node_modules", "vendor"]);
 				const result = await session.removeBlackbox(["node_modules"]);
@@ -30,7 +30,7 @@ describe("Blackbox patterns", () => {
 		));
 
 	test("remove all patterns", () =>
-		withPausedSession("test-blackbox-rm-all", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-blackbox-rm-all", "tests/fixtures/js/step-app.js", async (session) => {
 			await session.addBlackbox(["node_modules", "vendor", "internal"]);
 			const result = await session.removeBlackbox(["all"]);
 			expect(result).toEqual([]);
@@ -38,7 +38,7 @@ describe("Blackbox patterns", () => {
 		}));
 
 	test("blackbox persists across continue", () =>
-		withPausedSession("test-blackbox-persist", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-blackbox-persist", "tests/fixtures/js/step-app.js", async (session) => {
 			await session.setBreakpoint("step-app.js", 12);
 			await session.addBlackbox(["node_modules"]);
 			await session.continue();

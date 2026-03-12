@@ -1,5 +1,5 @@
 // Test fixture with async patterns for debug-that integration tests
-// Launch with: node --inspect-brk tests/fixtures/async-app.js
+// Launch with: node --inspect-brk tests/fixtures/js/async-app.js
 
 async function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));

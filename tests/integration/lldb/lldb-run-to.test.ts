@@ -6,8 +6,8 @@ const HAS_LLDB =
 	Bun.spawnSync(["which", "lldb-dap"]).exitCode === 0 ||
 	Bun.spawnSync(["/opt/homebrew/opt/llvm/bin/lldb-dap", "--version"]).exitCode === 0;
 
-const HELLO_BINARY = "tests/fixtures/dap/hello";
-const HELLO_SOURCE = resolve("tests/fixtures/dap/hello.c");
+const HELLO_BINARY = "tests/fixtures/c/hello";
+const HELLO_SOURCE = resolve("tests/fixtures/c/hello.c");
 
 async function withDapSession(
 	name: string,

@@ -1,5 +1,5 @@
 // Test fixture with errors for debug-that integration tests
-// Launch with: node --inspect-brk tests/fixtures/error-app.js
+// Launch with: node --inspect-brk tests/fixtures/js/error-app.js
 
 function riskyOperation(input) {
 	if (!input) {

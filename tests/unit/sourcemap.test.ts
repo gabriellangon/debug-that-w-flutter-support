@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { SourceMapResolver } from "../../src/sourcemap/resolver.ts";
 
-const FIXTURE_DIR = resolve(import.meta.dir, "../fixtures/ts-app");
+const FIXTURE_DIR = resolve(import.meta.dir, "../fixtures/ts");
 const DIST_DIR = resolve(FIXTURE_DIR, "dist");
 const APP_JS = resolve(DIST_DIR, "app.js");
 const APP_JS_MAP = resolve(DIST_DIR, "app.js.map");

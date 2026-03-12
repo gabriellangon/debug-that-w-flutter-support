@@ -42,7 +42,7 @@ describe("DaemonLogger integration", () => {
 		const session = new DebugSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
+			await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
 			await session.waitForState("paused");
 			const entries = readEntries(logPath);
 			expect(hasEvent(entries, "child.spawn")).toBe(true);
@@ -59,7 +59,7 @@ describe("DaemonLogger integration", () => {
 		const session = new DebugSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
+			await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
 			await session.waitForState("paused");
 			const entries = readEntries(logPath);
 			expect(

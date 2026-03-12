@@ -3,7 +3,7 @@ import { withDebuggerSession } from "../../helpers.ts";
 
 describe("props --depth N", () => {
 	test("depth 1 returns flat properties (default behavior)", () =>
-		withDebuggerSession("test-depth-1", "tests/fixtures/deep-nested.js", async (session) => {
+		withDebuggerSession("test-depth-1", "tests/fixtures/js/deep-nested.js", async (session) => {
 			const vars = await session.getVars();
 			const dataVar = vars.find((v) => v.name === "data");
 			expect(dataVar).toBeDefined();
@@ -16,7 +16,7 @@ describe("props --depth N", () => {
 		}));
 
 	test("depth 2 expands one level of nested objects", () =>
-		withDebuggerSession("test-depth-2", "tests/fixtures/deep-nested.js", async (session) => {
+		withDebuggerSession("test-depth-2", "tests/fixtures/js/deep-nested.js", async (session) => {
 			const vars = await session.getVars();
 			const dataVar = vars.find((v) => v.name === "data");
 			expect(dataVar).toBeDefined();
@@ -39,7 +39,7 @@ describe("props --depth N", () => {
 		}));
 
 	test("depth 3 expands two levels of nested objects", () =>
-		withDebuggerSession("test-depth-3", "tests/fixtures/deep-nested.js", async (session) => {
+		withDebuggerSession("test-depth-3", "tests/fixtures/js/deep-nested.js", async (session) => {
 			const vars = await session.getVars();
 			const dataVar = vars.find((v) => v.name === "data");
 			expect(dataVar).toBeDefined();
@@ -62,7 +62,7 @@ describe("props --depth N", () => {
 		}));
 
 	test("depth does not expand primitives", () =>
-		withDebuggerSession("test-depth-prim", "tests/fixtures/deep-nested.js", async (session) => {
+		withDebuggerSession("test-depth-prim", "tests/fixtures/js/deep-nested.js", async (session) => {
 			const vars = await session.getVars();
 			const dataVar = vars.find((v) => v.name === "data");
 			expect(dataVar).toBeDefined();

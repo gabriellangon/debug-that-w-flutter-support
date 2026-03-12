@@ -4,8 +4,8 @@ import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("break-toggle", () => {
 	test("toggle disables and re-enables a breakpoint", () =>
-		withPausedSession("test-break-toggle", "tests/fixtures/simple-app.js", async (session) => {
-			const bp = await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
+		withPausedSession("test-break-toggle", "tests/fixtures/js/simple-app.js", async (session) => {
+			const bp = await session.setBreakpoint("tests/fixtures/js/simple-app.js", 5);
 			expect(session.listBreakpoints()[0]?.disabled).toBeUndefined();
 
 			const disableResult = await session.toggleBreakpoint(bp.ref);
@@ -18,9 +18,9 @@ describe("break-toggle", () => {
 		}));
 
 	test("toggle all disables and re-enables all breakpoints", () =>
-		withPausedSession("test-break-toggle-all", "tests/fixtures/simple-app.js", async (session) => {
-			await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
-			await session.setBreakpoint("tests/fixtures/simple-app.js", 11);
+		withPausedSession("test-break-toggle-all", "tests/fixtures/js/simple-app.js", async (session) => {
+			await session.setBreakpoint("tests/fixtures/js/simple-app.js", 5);
+			await session.setBreakpoint("tests/fixtures/js/simple-app.js", 11);
 
 			await session.toggleBreakpoint("all");
 			for (const bp of session.listBreakpoints()) expect(bp.disabled).toBe(true);
@@ -32,7 +32,7 @@ describe("break-toggle", () => {
 	test("toggle unknown ref throws error", () =>
 		withPausedSession(
 			"test-break-toggle-unknown",
-			"tests/fixtures/simple-app.js",
+			"tests/fixtures/js/simple-app.js",
 			async (session) => {
 				await expect(session.toggleBreakpoint("BP#99")).rejects.toThrow("Unknown breakpoint ref");
 			},
@@ -41,8 +41,8 @@ describe("break-toggle", () => {
 
 describe("breakable", () => {
 	test("returns valid breakable locations", () =>
-		withPausedSession("test-breakable", "tests/fixtures/simple-app.js", async (session) => {
-			const locations = await session.getBreakableLocations("tests/fixtures/simple-app.js", 4, 8);
+		withPausedSession("test-breakable", "tests/fixtures/js/simple-app.js", async (session) => {
+			const locations = await session.getBreakableLocations("tests/fixtures/js/simple-app.js", 4, 8);
 			expect(locations.length).toBeGreaterThan(0);
 			for (const loc of locations) {
 				expect(loc.line).toBeGreaterThanOrEqual(4);
@@ -52,7 +52,7 @@ describe("breakable", () => {
 		}));
 
 	test("throws for unknown file", () =>
-		withPausedSession("test-breakable-unknown", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-breakable-unknown", "tests/fixtures/js/simple-app.js", async (session) => {
 			await expect(session.getBreakableLocations("nonexistent.js", 1, 5)).rejects.toThrow(
 				"No loaded script matches",
 			);
@@ -68,7 +68,7 @@ describe("breakable", () => {
 
 describe("restart-frame", () => {
 	test("restarts the current frame", () =>
-		withPausedSession("test-restart-frame", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-restart-frame", "tests/fixtures/js/step-app.js", async (session) => {
 			let currentLine = session.getStatus().pauseInfo?.line ?? 0;
 			while (currentLine < 10 && session.sessionState === "paused") {
 				await session.step("over");
@@ -93,8 +93,8 @@ describe("restart-frame", () => {
 
 describe("break --continue", () => {
 	test("setBreakpoint then continue works", () =>
-		withPausedSession("test-break-continue", "tests/fixtures/step-app.js", async (session) => {
-			await session.setBreakpoint("tests/fixtures/step-app.js", 12);
+		withPausedSession("test-break-continue", "tests/fixtures/js/step-app.js", async (session) => {
+			await session.setBreakpoint("tests/fixtures/js/step-app.js", 12);
 			await session.continue();
 			expect(session.sessionState).toBe("paused");
 			expect(session.getStatus().pauseInfo?.line).toBe(11);
@@ -103,7 +103,7 @@ describe("break --continue", () => {
 
 describe("break --pattern", () => {
 	test("set breakpoint with urlRegex", () =>
-		withPausedSession("test-break-pattern", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-break-pattern", "tests/fixtures/js/simple-app.js", async (session) => {
 			const result = await session.setBreakpoint("simple-app", 5, { urlRegex: "simple-app\\.js" });
 			expect(result.ref).toBe("BP#1");
 			expect(result.location.line).toBeGreaterThan(0);

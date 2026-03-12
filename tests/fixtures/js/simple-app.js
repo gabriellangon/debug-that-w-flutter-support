@@ -1,5 +1,5 @@
 // Simple test fixture for debug-that integration tests
-// Launch with: node --inspect-brk tests/fixtures/simple-app.js
+// Launch with: node --inspect-brk tests/fixtures/js/simple-app.js
 
 function greet(name) {
 	const message = `Hello, ${name}!`;

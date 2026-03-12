@@ -3,7 +3,7 @@ import { withPausedSession } from "../../helpers.ts";
 
 describe("Inspection commands", () => {
 	test("getSource returns lines around pause location with current marker", () =>
-		withPausedSession("test-source-basic", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-source-basic", "tests/fixtures/js/step-app.js", async (session) => {
 			const result = await session.getSource();
 			expect(result.url).toBeDefined();
 			expect(result.lines.length).toBeGreaterThan(0);
@@ -15,20 +15,20 @@ describe("Inspection commands", () => {
 		}));
 
 	test("getSource with file option shows source of specified file", () =>
-		withPausedSession("test-source-file", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-source-file", "tests/fixtures/js/step-app.js", async (session) => {
 			const result = await session.getSource({ file: "step-app.js" });
 			expect(result.url).toContain("step-app.js");
 			expect(result.lines.length).toBeGreaterThan(0);
 		}));
 
 	test("getSource with all option returns entire file", () =>
-		withPausedSession("test-source-all", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-source-all", "tests/fixtures/js/step-app.js", async (session) => {
 			const result = await session.getSource({ all: true });
 			expect(result.lines.length).toBeGreaterThanOrEqual(10);
 		}));
 
 	test("getScripts lists loaded scripts including step-app.js", () =>
-		withPausedSession("test-scripts-list", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-scripts-list", "tests/fixtures/js/step-app.js", async (session) => {
 			const scripts = session.getScripts();
 			expect(scripts.length).toBeGreaterThan(0);
 			const stepApp = scripts.find((s) => s.url.includes("step-app.js"));
@@ -37,7 +37,7 @@ describe("Inspection commands", () => {
 		}));
 
 	test("getScripts with filter narrows results", () =>
-		withPausedSession("test-scripts-filter", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-scripts-filter", "tests/fixtures/js/step-app.js", async (session) => {
 			const allScripts = session.getScripts();
 			const filtered = session.getScripts("step-app");
 			expect(filtered.length).toBeGreaterThan(0);
@@ -46,7 +46,7 @@ describe("Inspection commands", () => {
 		}));
 
 	test("getStack returns stack frames with refs and correct format", () =>
-		withPausedSession("test-stack-basic", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-stack-basic", "tests/fixtures/js/step-app.js", async (session) => {
 			const stack = session.getStack();
 			expect(stack.length).toBeGreaterThan(0);
 			for (const frame of stack) {
@@ -59,7 +59,7 @@ describe("Inspection commands", () => {
 		}));
 
 	test("getStack while inside a function shows multiple frames", () =>
-		withPausedSession("test-stack-nested", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-stack-nested", "tests/fixtures/js/step-app.js", async (session) => {
 			let currentLine = session.getStatus().pauseInfo?.line ?? 0;
 			while (currentLine < 10 && session.sessionState === "paused") {
 				await session.step("over");
@@ -77,7 +77,7 @@ describe("Inspection commands", () => {
 		}));
 
 	test("searchInScripts finds a string in step-app.js", () =>
-		withPausedSession("test-search-basic", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-search-basic", "tests/fixtures/js/step-app.js", async (session) => {
 			const results = await session.searchInScripts("helper");
 			expect(results.length).toBeGreaterThan(0);
 			const match = results.find((r) => r.url.includes("step-app.js"));
@@ -87,7 +87,7 @@ describe("Inspection commands", () => {
 		}));
 
 	test("searchInScripts with no matches returns empty array", () =>
-		withPausedSession("test-search-empty", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-search-empty", "tests/fixtures/js/step-app.js", async (session) => {
 			const results = await session.searchInScripts("xyzzy_nonexistent_string_12345");
 			expect(results.length).toBe(0);
 		}));

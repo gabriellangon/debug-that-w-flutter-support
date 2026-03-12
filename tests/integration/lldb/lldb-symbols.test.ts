@@ -9,7 +9,7 @@ const HAS_LLDB =
 
 const HAS_CC = (await $`which cc`.nothrow().quiet()).exitCode === 0;
 
-const FIXTURES_DIR = resolve("tests/fixtures/dap");
+const FIXTURES_DIR = resolve("tests/fixtures/c");
 const HELLO_SOURCE = resolve(FIXTURES_DIR, "hello.c");
 const HELLO_BINARY = resolve(FIXTURES_DIR, "hello");
 const HELLO_DSYM = resolve(FIXTURES_DIR, "hello.dSYM");
