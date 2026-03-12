@@ -37,6 +37,8 @@ daemonLogger.info("daemon.start", `Daemon starting for session "${session}"`, {
 const server = new DaemonServer(session, { idleTimeout: timeout, logger: daemonLogger });
 const cdpSession = new DebugSession(session, { daemonLogger });
 let dapSession: DapSession | null = null;
+let pendingRemaps: [string, string][] = [];
+let pendingSymbolPaths: string[] = [];
 
 function isDapRuntime(runtime: string | undefined): runtime is string {
 	return runtime !== undefined && runtime !== "node";
@@ -56,6 +58,15 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			const { command, brk = true, port, runtime } = req.args;
 			if (isDapRuntime(runtime)) {
 				dapSession = new DapSession(session, runtime);
+				// Apply any pending config from pre-launch calls
+				if (pendingRemaps.length > 0) {
+					dapSession.setRemaps(pendingRemaps);
+					pendingRemaps = [];
+				}
+				if (pendingSymbolPaths.length > 0) {
+					dapSession.setSymbolPaths(pendingSymbolPaths);
+					pendingSymbolPaths = [];
+				}
 				const result = await dapSession.launch(command, { brk });
 				return { ok: true, data: result };
 			}
@@ -303,6 +314,47 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			}
 			const modulesResult = await (session as DapSession).getModules(req.args.filter);
 			return { ok: true, data: modulesResult };
+		}
+
+		case "path-map-add": {
+			const { from, to } = req.args;
+			if (dapSession) {
+				const result = await dapSession.addRemap(from, to);
+				return { ok: true, data: result };
+			}
+			pendingRemaps.push([from, to]);
+			return {
+				ok: true,
+				data: `Stored remap "${from}" -> "${to}" (will apply on next DAP launch)`,
+			};
+		}
+
+		case "path-map-list": {
+			if (dapSession) {
+				const result = await dapSession.listRemaps();
+				return { ok: true, data: result };
+			}
+			if (pendingRemaps.length === 0) return { ok: true, data: "No path remappings configured" };
+			const listing = pendingRemaps.map(([f, t]) => `"${f}" -> "${t}"`).join("\n");
+			return { ok: true, data: listing };
+		}
+
+		case "path-map-clear": {
+			pendingRemaps = [];
+			if (dapSession) {
+				await dapSession.clearRemaps();
+			}
+			return { ok: true, data: "cleared" };
+		}
+
+		case "symbols-add": {
+			const { path } = req.args;
+			if (dapSession) {
+				const result = await dapSession.addSymbols(path);
+				return { ok: true, data: result };
+			}
+			pendingSymbolPaths.push(path);
+			return { ok: true, data: `Stored symbol path "${path}" (will apply on next DAP launch)` };
 		}
 
 		case "stop":

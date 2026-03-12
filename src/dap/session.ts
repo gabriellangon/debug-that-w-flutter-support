@@ -113,6 +113,10 @@ export class DapSession {
 	private allBreakpoints: DapBreakpointEntry[] = [];
 	private functionBreakpoints: DapFunctionBreakpointEntry[] = [];
 
+	// Stored config (applied on launch/restart, and immediately if connected+paused)
+	private _remaps: [string, string][] = [];
+	private _symbolPaths: string[] = [];
+
 	// Promise that resolves when the adapter stops (for step/continue/pause)
 	private stoppedWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
 	// Deduplicates concurrent fetchStackTrace calls
@@ -148,6 +152,16 @@ export class DapSession {
 			stopOnEntry: options.brk ?? true,
 			cwd: process.cwd(),
 		};
+
+		// Apply stored source-map remappings
+		if (this._remaps.length > 0) {
+			launchArgs.sourceMap = this._remaps.map(([from, to]) => [from, to]);
+		}
+
+		// Apply stored symbol paths as pre-run commands
+		if (this._symbolPaths.length > 0) {
+			launchArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
+		}
 
 		// Runtime-specific launch arguments
 		if (this._runtime === "python" || this._runtime === "debugpy") {
@@ -886,6 +900,72 @@ export class DapSession {
 
 	async restartFrame(_frameRef?: string): Promise<never> {
 		throw new Error("Frame restart is not supported in DAP mode.");
+	}
+
+	// ── Path remapping & symbol loading (LLDB commands via DAP evaluate) ──
+
+	/**
+	 * Execute a debugger command via DAP evaluate (repl context).
+	 * Unlike eval(), does not create refs — output is informational text.
+	 */
+	private async execReplCommand(command: string): Promise<string> {
+		this.requireConnected();
+		this.requirePaused();
+		await this.ensureStack();
+
+		const frameId = this.resolveFrameId();
+		const response = await this.getDap().send("evaluate", {
+			expression: command,
+			frameId,
+			context: "repl",
+		});
+
+		const body = response.body as { result: string; variablesReference: number };
+		return body.result;
+	}
+
+	setRemaps(remaps: [string, string][]): void {
+		this._remaps = [...remaps];
+	}
+
+	setSymbolPaths(paths: string[]): void {
+		this._symbolPaths = [...paths];
+	}
+
+	private canExecReplCommand(): boolean {
+		return this.dap !== null && this._state === "paused";
+	}
+
+	async addRemap(from: string, to: string): Promise<string> {
+		this._remaps.push([from, to]);
+		if (this.canExecReplCommand()) {
+			return this.execReplCommand(`settings append target.source-map "${from}" "${to}"`);
+		}
+		return `Stored remap "${from}" -> "${to}" (will apply on next launch)`;
+	}
+
+	async listRemaps(): Promise<string> {
+		if (this.canExecReplCommand()) {
+			return this.execReplCommand("settings show target.source-map");
+		}
+		if (this._remaps.length === 0) return "No path remappings configured";
+		return this._remaps.map(([from, to]) => `"${from}" -> "${to}"`).join("\n");
+	}
+
+	async clearRemaps(): Promise<void> {
+		this._remaps = [];
+		if (this.canExecReplCommand()) {
+			await this.execReplCommand("settings clear target.source-map");
+		}
+	}
+
+	async addSymbols(path: string): Promise<string> {
+		this._symbolPaths.push(path);
+		if (this.canExecReplCommand()) {
+			const result = await this.execReplCommand(`add-dsym ${path}`);
+			return result || "Symbols loaded (restart recommended for full effect)";
+		}
+		return `Stored symbol path "${path}" (will apply on next launch)`;
 	}
 
 	async runTo(file: string, line: number): Promise<void> {

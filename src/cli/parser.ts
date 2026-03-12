@@ -214,7 +214,6 @@ Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
-    [--dsym <path>] [--source-map <from>:<to>]
   attach <pid|ws-url|port>         Attach to running process
   stop                             Kill process + daemon
   sessions [--cleanup]             List active sessions
@@ -272,6 +271,12 @@ Blackboxing:
 Source Maps:
   sourcemap [file]                 Show source map info
   sourcemap --disable              Disable resolution globally
+
+Debug Info (DAP only):
+  path-map add <from> <to>         Remap debug info source paths
+  path-map list                    Show current path remappings
+  path-map clear                   Remove all path remappings
+  symbols add <path>               Load debug symbols (dSYM)
 
 Setup:
   install <adapter>                Download managed adapter binary
@@ -349,6 +354,12 @@ BLACKBOXING:
 SOURCE MAPS:
   dbg sourcemap [file]          Show source map info
   dbg sourcemap --disable       Disable resolution globally
+
+DEBUG INFO (DAP only):
+  dbg path-map add <from> <to>  Remap DWARF/debug source paths
+  dbg path-map list             Show current remappings
+  dbg path-map clear            Remove all remappings
+  dbg symbols add <path>        Load debug symbols (dSYM)
 
 DIAGNOSTICS:
   dbg logs [-f|--follow]        Show CDP protocol log

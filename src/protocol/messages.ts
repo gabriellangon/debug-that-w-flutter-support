@@ -279,6 +279,25 @@ const ModulesRequest = z.object({
 	}),
 });
 
+const PathMapAddRequest = z.object({
+	cmd: z.literal("path-map-add"),
+	args: z.object({
+		from: z.string(),
+		to: z.string(),
+	}),
+});
+
+const PathMapListRequest = z.object({ cmd: z.literal("path-map-list") });
+
+const PathMapClearRequest = z.object({ cmd: z.literal("path-map-clear") });
+
+const SymbolsAddRequest = z.object({
+	cmd: z.literal("symbols-add"),
+	args: z.object({
+		path: z.string(),
+	}),
+});
+
 export const DaemonRequestSchema = z.union([
 	PingRequest,
 	LaunchRequest,
@@ -318,6 +337,10 @@ export const DaemonRequestSchema = z.union([
 	SourcemapDisableRequest,
 	StopRequest,
 	ModulesRequest,
+	PathMapAddRequest,
+	PathMapListRequest,
+	PathMapClearRequest,
+	SymbolsAddRequest,
 ]);
 
 export type DaemonRequest = z.infer<typeof DaemonRequestSchema>;

@@ -40,6 +40,8 @@ if (process.argv.includes("--daemon")) {
 	await import("./commands/breakable.ts");
 	await import("./commands/restart-frame.ts");
 	await import("./commands/sourcemap.ts");
+	await import("./commands/path-map.ts");
+	await import("./commands/symbols.ts");
 	await import("./commands/install.ts");
 	await import("./commands/logs.ts");
 	const { parseArgs, run } = await import("./cli/parser.ts");
