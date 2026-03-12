@@ -1,7 +1,7 @@
 {
   "name": "debug-that",
   "version": "0.3.0",
-  "description": "Node.js Debugger CLI for AI Agents",
+  "description": "Universal Debugger CLI for AI Agents",
   "license": "MIT",
   "author": "Theodo Group",
   "repository": {
@@ -50,7 +50,6 @@
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",
-    "better-sqlite3": "^12.6.2",
     "zod": "^4.0.0"
   },
   "module": "index.ts"
