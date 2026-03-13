@@ -1,39 +1,18 @@
 import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { formatTimestamp } from "../formatter/timestamp.ts";
-import type { ConsoleMessage } from "../session/types.ts";
 
 registerCommand("console", async (args) => {
 	const session = args.global.session;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
-
-	const client = new DaemonClient(session);
-
-	const consoleArgs: Record<string, unknown> = {};
-	if (typeof args.flags.level === "string") {
-		consoleArgs.level = args.flags.level;
-	}
 	const since = parseIntFlag(args.flags, "since");
-	if (since !== undefined) consoleArgs.since = since;
-	if (args.flags.clear === true) {
-		consoleArgs.clear = true;
-	}
-
-	const response = await client.request("console", consoleArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const messages = response.data as ConsoleMessage[];
+	const messages = await daemonRequest(session, "console", {
+		...(typeof args.flags.level === "string" && { level: args.flags.level }),
+		...(since !== undefined && { since }),
+		...(args.flags.clear === true && { clear: true }),
+	});
+	if (!messages) return 1;
 
 	if (args.global.json) {
 		console.log(JSON.stringify(messages, null, 2));

@@ -1,33 +1,16 @@
 import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { formatTimestamp } from "../formatter/timestamp.ts";
-import type { ExceptionEntry } from "../session/types.ts";
 
 registerCommand("exceptions", async (args) => {
 	const session = args.global.session;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
-
-	const client = new DaemonClient(session);
-
-	const exceptionsArgs: Record<string, unknown> = {};
 	const since = parseIntFlag(args.flags, "since");
-	if (since !== undefined) exceptionsArgs.since = since;
-
-	const response = await client.request("exceptions", exceptionsArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const entries = response.data as ExceptionEntry[];
+	const entries = await daemonRequest(session, "exceptions", {
+		...(since !== undefined && { since }),
+	});
+	if (!entries) return 1;
 
 	if (args.global.json) {
 		console.log(JSON.stringify(entries, null, 2));

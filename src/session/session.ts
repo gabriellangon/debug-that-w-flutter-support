@@ -73,6 +73,7 @@ export interface VarEntry {
 	name: string;
 	type: string;
 	value: string;
+	scope?: string;
 }
 
 export interface PropEntry {
@@ -134,10 +135,18 @@ export interface ModuleEntry {
 
 // ── Source map resolver interface (for entry.ts compatibility) ────────
 
+export interface SourceMapInfo {
+	scriptId: string;
+	generatedUrl: string;
+	mapUrl: string;
+	sources: string[];
+	hasSourcesContent: boolean;
+}
+
 export interface SourceMapAccess {
 	findScriptForSource(file: string): { scriptId: string; url: string } | null;
-	getInfo(scriptId: string): unknown;
-	getAllInfos(): unknown[];
+	getInfo(scriptId: string): SourceMapInfo | null;
+	getAllInfos(): SourceMapInfo[];
 	setDisabled(disabled: boolean): void;
 }
 

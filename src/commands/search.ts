@@ -1,15 +1,9 @@
 import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { shortPath } from "../formatter/path.ts";
 
 registerCommand("search", async (args) => {
 	const session = args.global.session;
-
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
 
 	// Query from subcommand + positionals
 	const parts: string[] = [];
@@ -27,34 +21,13 @@ registerCommand("search", async (args) => {
 		return 1;
 	}
 
-	const client = new DaemonClient(session);
-
-	const searchArgs: Record<string, unknown> = { query };
-
-	if (args.flags.regex === true) {
-		searchArgs.isRegex = true;
-	}
-	if (args.flags["case-sensitive"] === true) {
-		searchArgs.caseSensitive = true;
-	}
-	if (typeof args.flags.file === "string") {
-		searchArgs.scriptId = args.flags.file;
-	}
-
-	const response = await client.request("search", searchArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as Array<{
-		url: string;
-		line: number;
-		column: number;
-		content: string;
-	}>;
+	const data = await daemonRequest(session, "search", {
+		query,
+		isRegex: args.flags.regex === true ? true : undefined,
+		caseSensitive: args.flags["case-sensitive"] === true ? true : undefined,
+		scriptId: typeof args.flags.file === "string" ? args.flags.file : undefined,
+	});
+	if (!data) return 1;
 
 	if (args.global.json) {
 		console.log(JSON.stringify(data, null, 2));

@@ -1,7 +1,15 @@
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { REQUEST_TIMEOUT_MS } from "../constants.ts";
-import { type DaemonResponse, DaemonResponseSchema } from "../protocol/messages.ts";
+import { DaemonResponseSchema, type ErrorResponse } from "../protocol/messages.ts";
+import type { ArgsForCmd, Cmd, ResponseDataMap } from "../protocol/response-map.ts";
+import { extractLines } from "../util/line-buffer.ts";
 import { getLockPath, getSocketDir, getSocketPath } from "./paths.ts";
+
+// ── Typed response ──────────────────────────────────────────────────
+
+export type TypedResponse<C extends Cmd> = { ok: true; data: ResponseDataMap[C] } | ErrorResponse;
+
+// ── Client ──────────────────────────────────────────────────────────
 
 export class DaemonClient {
 	private session: string;
@@ -12,12 +20,12 @@ export class DaemonClient {
 		this.socketPath = getSocketPath(session);
 	}
 
-	async request(cmd: string, args: Record<string, unknown> = {}): Promise<DaemonResponse> {
-		const message = `${JSON.stringify({ cmd, args })}\n`;
+	async request<C extends Cmd>(cmd: C, args?: ArgsForCmd<C>): Promise<TypedResponse<C>> {
+		const message = `${JSON.stringify({ cmd, args: args ?? {} })}\n`;
 		const sessionName = this.session;
 		const socketPath = this.socketPath;
 
-		return new Promise<DaemonResponse>((resolve, reject) => {
+		return new Promise<TypedResponse<C>>((resolve, reject) => {
 			let buffer = "";
 			let settled = false;
 
@@ -28,6 +36,27 @@ export class DaemonClient {
 				}
 			}, REQUEST_TIMEOUT_MS);
 
+			function settle(fn: () => void) {
+				if (!settled) {
+					settled = true;
+					clearTimeout(timer);
+					fn();
+				}
+			}
+
+			function tryParse(raw: string) {
+				try {
+					const parsed = DaemonResponseSchema.safeParse(JSON.parse(raw));
+					if (!parsed.success) {
+						reject(new Error("Invalid response from daemon"));
+					} else {
+						resolve(parsed.data as TypedResponse<C>);
+					}
+				} catch {
+					reject(new Error("Invalid JSON response from daemon"));
+				}
+			}
+
 			Bun.connect<undefined>({
 				unix: socketPath,
 				socket: {
@@ -36,72 +65,41 @@ export class DaemonClient {
 					},
 					data(_socket, data) {
 						buffer += data.toString();
-						const newlineIdx = buffer.indexOf("\n");
-						if (newlineIdx !== -1) {
-							const line = buffer.slice(0, newlineIdx);
-							if (!settled) {
-								settled = true;
-								clearTimeout(timer);
-								try {
-									const parsed = DaemonResponseSchema.safeParse(JSON.parse(line));
-									if (!parsed.success) {
-										reject(new Error("Invalid response from daemon"));
-									} else {
-										resolve(parsed.data);
-									}
-								} catch {
-									reject(new Error("Invalid JSON response from daemon"));
-								}
-							}
+						const result = extractLines(buffer);
+						buffer = result.remaining;
+						const first = result.lines[0];
+						if (first !== undefined) {
+							settle(() => tryParse(first));
 						}
 					},
 					close() {
-						if (!settled) {
-							settled = true;
-							clearTimeout(timer);
+						settle(() => {
 							if (buffer.trim()) {
-								try {
-									const parsed = DaemonResponseSchema.safeParse(JSON.parse(buffer.trim()));
-									if (!parsed.success) {
-										reject(new Error("Invalid response from daemon"));
-									} else {
-										resolve(parsed.data);
-									}
-								} catch {
-									reject(new Error("Invalid JSON response from daemon"));
-								}
+								tryParse(buffer.trim());
 							} else {
 								reject(new Error("Connection closed without response"));
 							}
-						}
+						});
 					},
 					error(_socket, error) {
-						if (!settled) {
-							settled = true;
-							clearTimeout(timer);
-							reject(error);
-						}
+						settle(() => reject(error));
 					},
 					connectError(_socket, error) {
-						if (!settled) {
-							settled = true;
-							clearTimeout(timer);
+						settle(() =>
 							reject(
 								new Error(`Daemon not running for session "${sessionName}": ${error.message}`),
-							);
-						}
+							),
+						);
 					},
 				},
 			}).catch((err) => {
-				if (!settled) {
-					settled = true;
-					clearTimeout(timer);
+				settle(() =>
 					reject(
 						new Error(
 							`Cannot connect to daemon for session "${sessionName}": ${err instanceof Error ? err.message : String(err)}`,
 						),
-					);
-				}
+					),
+				);
 			});
 		});
 	}
@@ -165,4 +163,30 @@ export class DaemonClient {
 		const files = readdirSync(dir);
 		return files.filter((f) => f.endsWith(".sock")).map((f) => f.slice(0, -5));
 	}
+}
+
+// ── Request helper ──────────────────────────────────────────────────
+
+/**
+ * Send a typed daemon request with automatic session check and error handling.
+ * Returns the response data on success, or null (after printing the error).
+ */
+export async function daemonRequest<C extends Cmd>(
+	session: string,
+	cmd: C,
+	args?: ArgsForCmd<C>,
+): Promise<ResponseDataMap[C] | null> {
+	if (!DaemonClient.isRunning(session)) {
+		console.error(`No active session "${session}"`);
+		console.error("  -> Try: dbg launch --brk node app.js");
+		return null;
+	}
+	const client = new DaemonClient(session);
+	const response = await client.request(cmd, args);
+	if (!response.ok) {
+		console.error(response.error);
+		if (response.suggestion) console.error(`  ${response.suggestion}`);
+		return null;
+	}
+	return response.data;
 }

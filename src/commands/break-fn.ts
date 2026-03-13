@@ -1,14 +1,8 @@
 import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { daemonRequest } from "../daemon/client.ts";
 
 registerCommand("break-fn", async (args) => {
 	const session = args.global.session;
-
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk --runtime lldb ./program");
-		return 1;
-	}
 
 	const name = args.subcommand;
 	if (!name) {
@@ -20,16 +14,8 @@ registerCommand("break-fn", async (args) => {
 
 	const condition = typeof args.flags.condition === "string" ? args.flags.condition : undefined;
 
-	const client = new DaemonClient(session);
-	const response = await client.request("break-fn", { name, condition });
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as { ref: string };
+	const data = await daemonRequest(session, "break-fn", { name, condition });
+	if (!data) return 1;
 
 	if (args.global.json) {
 		console.log(JSON.stringify(data, null, 2));

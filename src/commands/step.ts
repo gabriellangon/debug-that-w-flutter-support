@@ -1,32 +1,20 @@
 import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
-import type { StateSnapshot } from "../session/types.ts";
 import { printState } from "./print-state.ts";
 
 registerCommand("step", async (args) => {
 	const session = args.global.session;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
-
 	// The subcommand is the step mode: over, into, or out (default: over)
 	const validModes = new Set(["over", "into", "out"]);
-	const mode = args.subcommand && validModes.has(args.subcommand) ? args.subcommand : "over";
+	const mode = (args.subcommand && validModes.has(args.subcommand) ? args.subcommand : "over") as
+		| "over"
+		| "into"
+		| "out";
 
-	const client = new DaemonClient(session);
-	const response = await client.request("step", { mode });
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as StateSnapshot;
+	const data = await daemonRequest(session, "step", { mode });
+	if (!data) return 1;
 
 	if (args.global.json) {
 		console.log(JSON.stringify(data, null, 2));

@@ -6,6 +6,7 @@ import {
 	DaemonRequestSchema,
 	type DaemonResponse,
 } from "../protocol/messages.ts";
+import { extractLines } from "../util/line-buffer.ts";
 import type { Logger } from "./logger.ts";
 import { ensureSocketDir, getLockPath, getSocketPath } from "./paths.ts";
 
@@ -84,19 +85,17 @@ export class DaemonServer {
 						return;
 					}
 
-					const newlineIdx = socket.data.buffer.indexOf("\n");
-					if (newlineIdx === -1) return;
-
-					const line = socket.data.buffer.slice(0, newlineIdx);
-					socket.data.buffer = socket.data.buffer.slice(newlineIdx + 1);
-
-					server.handleMessage(socket, line);
+					const { lines, remaining } = extractLines(socket.data.buffer);
+					socket.data.buffer = remaining;
+					for (const line of lines) {
+						server.handleMessage(socket, line);
+					}
 				},
 				drain(socket) {
 					// Continue writing any pending data
 					server.flushPending(socket);
 				},
-				close() { },
+				close() {},
 				error(_socket, error) {
 					server.logger.error("socket.error", error.message);
 					console.error(`[daemon] socket error: ${error.message}`);
@@ -150,18 +149,19 @@ export class DaemonServer {
 
 		const parsed = DaemonRequestSchema.safeParse(json);
 		if (!parsed.success) {
-			const cmd = json && typeof json === "object" && typeof json.cmd === "string" ? json.cmd : undefined;
+			const cmd =
+				json && typeof json === "object" && typeof json.cmd === "string" ? json.cmd : undefined;
 
 			const response = cmd
 				? {
-					ok: false,
-					error: `Unknown command: ${cmd}`,
-					suggestion: "-> Try: debug-that --help",
-				}
+						ok: false,
+						error: `Unknown command: ${cmd}`,
+						suggestion: "-> Try: debug-that --help",
+					}
 				: {
-					ok: false,
-					error: "Invalid request: must have { cmd: string, args: object }",
-				};
+						ok: false,
+						error: "Invalid request: must have { cmd: string, args: object }",
+					};
 
 			this.sendResponse(socket, response);
 			return;
@@ -169,7 +169,10 @@ export class DaemonServer {
 		const request: DaemonRequest = parsed.data;
 
 		if (!this.handler) {
-			this.logger.error("socket.no-handler", "No request handler registered. Did you call `server.onRequest`?");
+			this.logger.error(
+				"socket.no-handler",
+				"No request handler registered. Did you call `server.onRequest`?",
+			);
 			this.sendResponse(socket, { ok: false, error: "No request handler registered" });
 			return;
 		}
@@ -179,7 +182,10 @@ export class DaemonServer {
 			this.sendResponse(socket, response);
 		} catch (err) {
 			this.logger.error("socket.handler-error", "Error in request handler", { error: err });
-			this.sendResponse(socket, { ok: false, error: err instanceof Error ? err.message : String(err) });
+			this.sendResponse(socket, {
+				ok: false,
+				error: err instanceof Error ? err.message : String(err),
+			});
 		}
 	}
 
