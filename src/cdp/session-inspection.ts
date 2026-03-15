@@ -589,7 +589,7 @@ export function getStack(
 		if (!options.generated) {
 			const resolved = session.resolveToSource(sid, lineNum, colNum ?? 0);
 			if (resolved) {
-				url = resolved.url;
+				url = resolved.file;
 				displayLine = resolved.line;
 				displayCol = resolved.column;
 			}

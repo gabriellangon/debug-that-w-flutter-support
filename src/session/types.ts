@@ -1,3 +1,29 @@
+// ── Coordinate spaces ────────────────────────────────────────────────
+// Source = user-facing (original .ts/.jsx files, 1-based lines/columns)
+// Runtime = V8-facing (generated .js files, 1-based lines in this layer,
+//           converted to 0-based only at the CDP call boundary)
+
+/** User-facing location in the original source file. Lines and columns are 1-based. */
+export interface SourceLocation {
+	file: string;
+	line: number;
+	column?: number;
+}
+
+/** Runtime location in the generated file. Lines are 1-based (converted to 0-based at CDP boundary). */
+export interface RuntimeLocation {
+	scriptId: string;
+	file: string;
+	line: number;
+	column?: number;
+}
+
+/** Result of resolving source coordinates to runtime coordinates. Carries both spaces. */
+export interface ResolvedLocation {
+	source: SourceLocation;
+	runtime: RuntimeLocation;
+}
+
 export interface PauseInfo {
 	reason: string;
 	scriptId?: string;

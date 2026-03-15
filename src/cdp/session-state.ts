@@ -55,7 +55,7 @@ export async function buildState(
 	if (frameScriptId && !options.generated) {
 		const resolved = session.resolveToSource(frameScriptId, frameLine + 1, frameColumn ?? 0);
 		if (resolved) {
-			frameUrl = resolved.url;
+			frameUrl = resolved.file;
 			displayLine = resolved.line;
 			displayColumn = resolved.column;
 		}

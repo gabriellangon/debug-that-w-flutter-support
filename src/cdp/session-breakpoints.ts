@@ -1,3 +1,4 @@
+import type { BreakpointListItem } from "../session/session.ts";
 import { escapeRegex } from "../util/escape-regex.ts";
 import type { CdpSession } from "./session.ts";
 
@@ -6,7 +7,11 @@ export async function setBreakpoint(
 	file: string,
 	line: number,
 	options?: { condition?: string; hitCount?: number; urlRegex?: string; column?: number },
-): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
+): Promise<{
+	ref: string;
+	location: { url: string; line: number; column?: number };
+	pending?: boolean;
+}> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -15,10 +20,12 @@ export async function setBreakpoint(
 	const userColumn = options?.column !== undefined ? options.column - 1 : undefined;
 
 	// Source map translation (source .ts → runtime .js)
-	const runtime = !options?.urlRegex ? session.resolveToRuntime(file, line, userColumn ?? 0) : null;
-	const actualFile = runtime?.file ?? file;
-	const actualLine = runtime?.line ?? line;
-	const actualColumn = runtime ? runtime.column : userColumn;
+	const resolved = !options?.urlRegex
+		? session.resolveToRuntime(file, line, userColumn ?? 0)
+		: null;
+	const actualFile = resolved?.runtime.file ?? file;
+	const actualLine = resolved?.runtime.line ?? line;
+	const actualColumn = resolved ? resolved.runtime.column : userColumn;
 
 	let url: string | null = null;
 	let urlRegex: string | undefined;
@@ -26,7 +33,7 @@ export async function setBreakpoint(
 		urlRegex = options.urlRegex;
 	} else {
 		url = session.findScriptUrl(actualFile);
-		if (!url && !runtime?.scriptId) {
+		if (!url && !resolved?.runtime.scriptId) {
 			urlRegex = `${escapeRegex(actualFile)}$`;
 		}
 	}
@@ -38,7 +45,7 @@ export async function setBreakpoint(
 		condition,
 		url: url ?? undefined,
 		urlRegex,
-		scriptId: runtime?.scriptId,
+		scriptId: resolved?.runtime.scriptId,
 		scripts: session.scripts,
 	});
 
@@ -47,20 +54,20 @@ export async function setBreakpoint(
 	const isPending = !loc;
 	if (!url) url = r.url ?? session.findScriptUrl(actualFile);
 
-	const resolvedUrl = runtime?.originalFile ?? url ?? file;
-	const resolvedLine = runtime?.originalLine ?? (loc ? loc.lineNumber + 1 : line);
+	const sourceUrl = resolved?.source.file ?? url ?? file;
+	const sourceLine = resolved?.source.line ?? (loc ? loc.lineNumber + 1 : line);
 	const resolvedColumn = loc?.columnNumber;
 
 	const meta: Record<string, unknown> = {
-		url: resolvedUrl,
-		line: resolvedLine,
+		url: sourceUrl,
+		line: sourceLine,
 	};
 	if (isPending) {
 		meta.pending = true;
 	}
-	if (runtime) {
-		meta.originalUrl = runtime.originalFile;
-		meta.originalLine = runtime.originalLine;
+	if (resolved) {
+		meta.originalUrl = resolved.source.file;
+		meta.originalLine = resolved.source.line;
 		meta.generatedUrl = url ?? actualFile;
 		meta.generatedLine = loc ? loc.lineNumber + 1 : actualLine;
 	}
@@ -80,8 +87,8 @@ export async function setBreakpoint(
 	const ref = session.refs.addBreakpoint(breakpointId, meta);
 
 	const location: { url: string; line: number; column?: number } = {
-		url: resolvedUrl,
-		line: resolvedLine,
+		url: sourceUrl,
+		line: sourceLine,
 	};
 	if (resolvedColumn !== undefined) {
 		location.column = resolvedColumn;
@@ -128,50 +135,14 @@ export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
 	}
 }
 
-export function listBreakpoints(session: CdpSession): Array<{
-	ref: string;
-	type: "BP" | "LP";
-	url: string;
-	line: number;
-	column?: number;
-	condition?: string;
-	hitCount?: number;
-	template?: string;
-	disabled?: boolean;
-	originalUrl?: string;
-	originalLine?: number;
-}> {
+export function listBreakpoints(session: CdpSession): BreakpointListItem[] {
 	const bps = session.refs.list("BP");
 	const lps = session.refs.list("LP");
 	const all = [...bps, ...lps];
 
-	const results: Array<{
-		ref: string;
-		type: "BP" | "LP";
-		url: string;
-		line: number;
-		column?: number;
-		condition?: string;
-		hitCount?: number;
-		template?: string;
-		disabled?: boolean;
-		originalUrl?: string;
-		originalLine?: number;
-	}> = all.map((entry) => {
+	const results: BreakpointListItem[] = all.map((entry) => {
 		const meta = entry.meta ?? {};
-		const item: {
-			ref: string;
-			type: "BP" | "LP";
-			url: string;
-			line: number;
-			column?: number;
-			condition?: string;
-			hitCount?: number;
-			template?: string;
-			disabled?: boolean;
-			originalUrl?: string;
-			originalLine?: number;
-		} = {
+		const item: BreakpointListItem = {
 			ref: entry.ref,
 			type: entry.type as "BP" | "LP",
 			url: meta.url as string,
@@ -204,17 +175,7 @@ export function listBreakpoints(session: CdpSession): Array<{
 	// Include disabled breakpoints
 	for (const [ref, entry] of session.disabledBreakpoints) {
 		const meta = entry.meta;
-		const item: {
-			ref: string;
-			type: "BP" | "LP";
-			url: string;
-			line: number;
-			column?: number;
-			condition?: string;
-			hitCount?: number;
-			template?: string;
-			disabled?: boolean;
-		} = {
+		const item: BreakpointListItem = {
 			ref,
 			type: (meta.type as "BP" | "LP") ?? "BP",
 			url: meta.url as string,
@@ -409,14 +370,14 @@ export async function setLogpoint(
 	}
 
 	// Source map translation (source .ts → runtime .js)
-	const runtime = session.resolveToRuntime(file, line, 0);
-	const actualFile = runtime?.file ?? file;
-	const actualLine = runtime?.line ?? line;
+	const resolved = session.resolveToRuntime(file, line, 0);
+	const actualFile = resolved?.runtime.file ?? file;
+	const actualLine = resolved?.runtime.line ?? line;
 
 	let url: string | null = null;
 	let urlRegex: string | undefined;
 	url = session.findScriptUrl(actualFile);
-	if (!url && !runtime?.scriptId) {
+	if (!url && !resolved?.runtime.scriptId) {
 		urlRegex = `${escapeRegex(actualFile)}$`;
 	}
 
@@ -437,18 +398,18 @@ export async function setLogpoint(
 		condition: logExpr,
 		url: url ?? undefined,
 		urlRegex,
-		scriptId: runtime?.scriptId ?? scriptId,
+		scriptId: resolved?.runtime.scriptId ?? scriptId,
 		scripts: session.scripts,
 	});
 
 	const loc = r.location;
-	const resolvedUrl = runtime?.originalFile ?? url ?? file;
-	const resolvedLine = runtime?.originalLine ?? (loc ? loc.lineNumber + 1 : line);
+	const sourceUrl = resolved?.source.file ?? url ?? file;
+	const sourceLine = resolved?.source.line ?? (loc ? loc.lineNumber + 1 : line);
 	const resolvedColumn = loc?.columnNumber;
 
 	const meta: Record<string, unknown> = {
-		url: resolvedUrl,
-		line: resolvedLine,
+		url: sourceUrl,
+		line: sourceLine,
 		template,
 	};
 	if (resolvedColumn !== undefined) {
@@ -464,8 +425,8 @@ export async function setLogpoint(
 	const ref = session.refs.addLogpoint(r.breakpointId, meta);
 
 	const location: { url: string; line: number; column?: number } = {
-		url: resolvedUrl,
-		line: resolvedLine,
+		url: sourceUrl,
+		line: sourceLine,
 	};
 	if (resolvedColumn !== undefined) {
 		location.column = resolvedColumn;

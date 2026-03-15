@@ -11,7 +11,9 @@ import type {
 	ConsoleMessage,
 	ExceptionEntry,
 	LaunchResult,
+	ResolvedLocation,
 	SessionStatus,
+	SourceLocation,
 	StateOptions,
 	StateSnapshot,
 } from "../session/types.ts";
@@ -211,7 +213,7 @@ export class CdpSession extends BaseSession {
 					translated.column ?? 0,
 				);
 				if (resolved) {
-					translated.url = resolved.url;
+					translated.url = resolved.file;
 					translated.line = resolved.line - 1;
 					if (resolved.column !== undefined) {
 						translated.column = resolved.column - 1;
@@ -276,7 +278,7 @@ export class CdpSession extends BaseSession {
 					translated.column ?? 0,
 				);
 				if (resolved) {
-					translated.url = resolved.url;
+					translated.url = resolved.file;
 					translated.line = resolved.line - 1; // back to 0-based for pauseInfo
 					if (resolved.column !== undefined) {
 						translated.column = resolved.column - 1;
@@ -700,31 +702,21 @@ export class CdpSession extends BaseSession {
 
 	/**
 	 * Translate source coordinates (user-facing, 1-based) to runtime coordinates.
-	 * Returns the generated file/line/column + scriptId if a source map mapping exists,
-	 * or null if no mapping is found (caller should use the original coordinates).
+	 * Returns both coordinate spaces if a source map mapping exists, or null
+	 * if no mapping is found (caller should use the original coordinates as-is).
 	 */
-	resolveToRuntime(
-		file: string,
-		line: number,
-		column = 0,
-	): {
-		file: string;
-		line: number;
-		column: number;
-		scriptId: string;
-		originalFile: string;
-		originalLine: number;
-	} | null {
+	resolveToRuntime(file: string, line: number, column = 0): ResolvedLocation | null {
 		const generated = this.sourceMapResolver.toGenerated(file, line, column);
 		if (!generated) return null;
 		const scriptInfo = this.scripts.get(generated.scriptId);
 		return {
-			file: scriptInfo?.url ?? file,
-			line: generated.line,
-			column: generated.column,
-			scriptId: generated.scriptId,
-			originalFile: file,
-			originalLine: line,
+			source: { file, line, column },
+			runtime: {
+				scriptId: generated.scriptId,
+				file: scriptInfo?.url ?? file,
+				line: generated.line,
+				column: generated.column,
+			},
 		};
 	}
 
@@ -733,19 +725,15 @@ export class CdpSession extends BaseSession {
 	 * Falls back to the primary source URL if the exact line has no mapping.
 	 * Returns null if the script has no source map.
 	 */
-	resolveToSource(
-		scriptId: string,
-		line1Based: number,
-		column: number,
-	): { url: string; line: number; column?: number } | null {
+	resolveToSource(scriptId: string, line1Based: number, column: number): SourceLocation | null {
 		const original = this.sourceMapResolver.toOriginal(scriptId, line1Based, column);
 		if (original) {
-			return { url: original.source, line: original.line, column: original.column + 1 };
+			return { file: original.source, line: original.line, column: original.column + 1 };
 		}
 		// Fallback: script has a source map but this line has no mapping
 		const primaryUrl = this.sourceMapResolver.getScriptOriginalUrl(scriptId);
 		if (primaryUrl) {
-			return { url: primaryUrl, line: line1Based };
+			return { file: primaryUrl, line: line1Based };
 		}
 		return null;
 	}

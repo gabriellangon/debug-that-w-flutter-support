@@ -65,9 +65,9 @@ export async function runToLocation(
 	}
 
 	// Source map translation (source .ts → runtime .js)
-	const runtime = session.resolveToRuntime(file, line, 0);
-	const actualFile = runtime?.file ?? file;
-	const actualLine = runtime?.line ?? line;
+	const resolved = session.resolveToRuntime(file, line, 0);
+	const actualFile = resolved?.runtime.file ?? file;
+	const actualLine = resolved?.runtime.line ?? line;
 
 	// Find the script URL matching the given file (by suffix)
 	const scriptUrl = session.findScriptUrl(actualFile);
