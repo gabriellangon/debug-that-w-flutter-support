@@ -417,8 +417,6 @@ export async function setLogpoint(
 		throw new Error("No active debug session");
 	}
 
-	const url = session.findScriptUrl(file);
-
 	// Build the logpoint condition: evaluate console.log(...), then return false
 	// so execution does not pause.
 	let logExpr = `console.log(${template})`;
@@ -428,9 +426,30 @@ export async function setLogpoint(
 		logExpr = `${logExpr}, false`;
 	}
 
+	// Source map translation (original .ts → generated .js)
+	let originalFile: string | null = null;
+	let originalLine: number | null = null;
+	let actualLine = line;
+	let actualFile = file;
+	let generatedScriptId: string | null = null;
+
+	const generated = session.sourceMapResolver.toGenerated(file, line, 0);
+	if (generated) {
+		originalFile = file;
+		originalLine = line;
+		actualLine = generated.line;
+		generatedScriptId = generated.scriptId;
+		const scriptInfo = session.scripts.get(generated.scriptId);
+		if (scriptInfo) {
+			actualFile = scriptInfo.url;
+		}
+	}
+
+	let url: string | null = null;
 	let urlRegex: string | undefined;
-	if (!url) {
-		urlRegex = `${escapeRegex(file)}$`;
+	url = session.findScriptUrl(actualFile);
+	if (!url && !generatedScriptId) {
+		urlRegex = `${escapeRegex(actualFile)}$`;
 	}
 
 	// Find scriptId for Bun adapter
@@ -445,18 +464,18 @@ export async function setLogpoint(
 	}
 
 	const r = await session.adapter.setBreakpointByLocation(session.cdp, {
-		file,
-		line,
+		file: actualFile,
+		line: actualLine,
 		condition: logExpr,
 		url: url ?? undefined,
 		urlRegex,
-		scriptId,
+		scriptId: generatedScriptId ?? scriptId,
 		scripts: session.scripts,
 	});
 
 	const loc = r.location;
-	const resolvedUrl = url ?? file;
-	const resolvedLine = loc ? loc.lineNumber + 1 : line;
+	const resolvedUrl = originalFile ?? url ?? file;
+	const resolvedLine = originalLine ?? (loc ? loc.lineNumber + 1 : line);
 	const resolvedColumn = loc?.columnNumber;
 
 	const meta: Record<string, unknown> = {

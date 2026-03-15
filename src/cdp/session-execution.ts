@@ -64,15 +64,27 @@ export async function runToLocation(
 		throw new Error("Cannot run-to: no CDP connection");
 	}
 
+	// Source map translation (original .ts → generated .js)
+	let actualLine = line;
+	let actualFile = file;
+	const generated = session.sourceMapResolver.toGenerated(file, line, 0);
+	if (generated) {
+		actualLine = generated.line;
+		const scriptInfo = session.scripts.get(generated.scriptId);
+		if (scriptInfo) {
+			actualFile = scriptInfo.url;
+		}
+	}
+
 	// Find the script URL matching the given file (by suffix)
-	const scriptUrl = session.findScriptUrl(file);
+	const scriptUrl = session.findScriptUrl(actualFile);
 	if (!scriptUrl) {
 		throw new Error(`Cannot run-to: no loaded script matches "${file}"`);
 	}
 
 	// Set a temporary breakpoint (CDP lines are 0-based)
 	const bpResult = await session.cdp.send("Debugger.setBreakpointByUrl", {
-		lineNumber: line - 1,
+		lineNumber: actualLine - 1,
 		urlRegex: escapeRegex(scriptUrl),
 	});
 
