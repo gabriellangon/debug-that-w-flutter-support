@@ -3,7 +3,7 @@ import type { DaemonLogger } from "../daemon/logger.ts";
 import { DapSession } from "../dap/session.ts";
 import type { Session } from "./session.ts";
 
-const DAP_RUNTIMES = new Set(["lldb", "lldb-dap", "codelldb", "python", "debugpy"]);
+const DAP_RUNTIMES = new Set(["lldb", "lldb-dap", "codelldb", "python", "debugpy", "java"]);
 
 /**
  * Returns true if the given runtime string should use a DAP session

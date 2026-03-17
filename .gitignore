@@ -36,3 +36,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # C test fixture build artifacts
 tests/fixtures/c/hello
 tests/fixtures/c/*.dSYM
+
+# Java build artifacts
+*.class
+tests/fixtures/java/multi-package/out/
+
+# Generated at build time
+src/dap/adapters/java/adapter-sources.tar.gz

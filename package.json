@@ -32,7 +32,7 @@
   ],
   "scripts": {
     "dev": "bun run src/main.ts",
-    "build": "bun build src/main.ts --outdir dist --target=bun",
+    "build": "bun run build.ts",
     "test": "bun test tests/unit/ && bun test --concurrent tests/integration/",
     "lint": "biome check .",
     "format": "biome check --write .",

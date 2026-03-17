@@ -5,6 +5,7 @@ import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
 import { BaseSession } from "../session/base-session.ts";
 import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
+import { getJavaAdapterClasspath, isJavaAdapterInstalled } from "./adapters/index.ts";
 import { DapClient } from "./client.ts";
 
 /** Directory where managed adapter binaries are stored. */
@@ -13,46 +14,102 @@ export function getManagedAdaptersDir(): string {
 	return join(home, ".debug-that", "adapters");
 }
 
-/**
- * Resolves the path to a DAP adapter binary for a given runtime.
- * Checks managed install path first, then known system paths, then PATH.
- */
-function resolveAdapterCommand(runtime: string): string[] {
-	switch (runtime) {
-		case "lldb":
-		case "lldb-dap": {
-			// 1. Check managed install
-			const managedPath = join(getManagedAdaptersDir(), "lldb-dap");
-			if (existsSync(managedPath)) {
-				return [managedPath];
-			}
-			// 2. Check system PATH
-			const whichResult = Bun.spawnSync(["which", "lldb-dap"]);
-			if (whichResult.exitCode === 0) {
-				return ["lldb-dap"];
-			}
-			// 3. Try homebrew LLVM path
-			const brewPath = "/opt/homebrew/opt/llvm/bin/lldb-dap";
-			if (existsSync(brewPath)) {
-				return [brewPath];
-			}
-			// 4. Fallback — will fail at spawn with a clear error
-			return ["lldb-dap"];
+// ── Runtime-specific configuration ───────────────────────────────
+
+interface DapRuntimeConfig {
+	resolveCommand(): string[];
+	buildLaunchArgs(program: string, programArgs: string[], cwd: string): Record<string, unknown>;
+	parseAttachTarget?(target: string): Record<string, unknown>;
+}
+
+const DEFAULT_LAUNCH: DapRuntimeConfig["buildLaunchArgs"] = (program, programArgs, cwd) => ({
+	program,
+	args: programArgs,
+	cwd,
+});
+
+const lldbConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		const managedPath = join(getManagedAdaptersDir(), "lldb-dap");
+		if (existsSync(managedPath)) return [managedPath];
+		if (Bun.which("lldb-dap")) return ["lldb-dap"];
+		const brewPath = "/opt/homebrew/opt/llvm/bin/lldb-dap";
+		if (existsSync(brewPath)) return [brewPath];
+		return ["lldb-dap"];
+	},
+	buildLaunchArgs: DEFAULT_LAUNCH,
+};
+
+const debugpyConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		const pyBin = Bun.which("python3") ? "python3" : "python";
+		return [pyBin, "-m", "debugpy.adapter"];
+	},
+	buildLaunchArgs: (program, programArgs, cwd) => ({
+		program,
+		args: programArgs,
+		cwd,
+		console: "internalConsole",
+		justMyCode: false,
+	}),
+};
+
+const javaConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		if (!isJavaAdapterInstalled()) {
+			throw new Error("Java debug adapter not installed. Run `dbg install java` first.");
 		}
-		case "codelldb":
-			return ["codelldb", "--port", "0"];
-		case "python":
-		case "debugpy": {
-			// debugpy adapter runs as a Python module
-			// Try python3 first, then python
-			const py3 = Bun.spawnSync(["which", "python3"]);
-			const pyBin = py3.exitCode === 0 ? "python3" : "python";
-			return [pyBin, "-m", "debugpy.adapter"];
+		const cp = getJavaAdapterClasspath();
+		return ["java", "-cp", cp, "com.debugthat.adapter.Main"];
+	},
+	buildLaunchArgs(program, programArgs, _cwd) {
+		const basename = program.split("/").pop() ?? program;
+		const mainClass = basename.replace(/\.(java|class)$/, "");
+		// classPaths must point to where .class files live (typically same dir as .java)
+		const programDir = program.includes("/")
+			? program.substring(0, program.lastIndexOf("/"))
+			: _cwd;
+		return {
+			mainClass,
+			classPaths: [programDir],
+			cwd: programDir,
+			sourcePaths: [programDir],
+			stopOnEntry: true,
+			...(programArgs.length > 0 ? { args: programArgs.join(" ") } : {}),
+		};
+	},
+	parseAttachTarget(target) {
+		const colonIdx = target.lastIndexOf(":");
+		if (colonIdx > 0) {
+			return {
+				hostName: target.substring(0, colonIdx),
+				port: parseInt(target.substring(colonIdx + 1), 10),
+			};
 		}
-		default:
-			// Assume the runtime string is the adapter binary name or path
-			return [runtime];
-	}
+		const port = parseInt(target, 10);
+		return { hostName: "localhost", port: Number.isNaN(port) ? 5005 : port };
+	},
+};
+
+const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
+	lldb: lldbConfig,
+	"lldb-dap": lldbConfig,
+	codelldb: {
+		resolveCommand: () => ["codelldb", "--port", "0"],
+		buildLaunchArgs: DEFAULT_LAUNCH,
+	},
+	python: debugpyConfig,
+	debugpy: debugpyConfig,
+	java: javaConfig,
+};
+
+function getRuntimeConfig(runtime: string): DapRuntimeConfig {
+	return (
+		RUNTIME_CONFIGS[runtime] ?? {
+			resolveCommand: () => [runtime],
+			buildLaunchArgs: DEFAULT_LAUNCH,
+		}
+	);
 }
 
 interface DapBreakpointEntry {
@@ -90,6 +147,7 @@ interface DapStackFrame {
 export class DapSession extends BaseSession {
 	private dap: DapClient | null = null;
 	private _runtime: string;
+	private _isAttached = false; // true if session was created via attach (not launch)
 	private _threadId = 1; // Most adapters use thread 1; updated on "stopped" event
 	private _stackFrames: DapStackFrame[] = [];
 	private adapterCapabilities: DebugProtocol.Capabilities = {};
@@ -149,20 +207,18 @@ export class DapSession extends BaseSession {
 			throw new Error("Session already has an active debug target");
 		}
 
-		const adapterCmd = resolveAdapterCommand(this._runtime);
+		const config = getRuntimeConfig(this._runtime);
+		const adapterCmd = config.resolveCommand();
 		this.dap = DapClient.spawn(adapterCmd);
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
-		// Build launch arguments. The exact schema depends on the adapter.
-		const program = options.program ?? command[0];
+		const program = options.program ?? command[0] ?? "";
 		const programArgs = options.args ?? command.slice(1);
 		const launchArgs: Record<string, unknown> = {
-			program,
-			args: programArgs,
 			stopOnEntry: options.brk ?? true,
-			cwd: process.cwd(),
+			...config.buildLaunchArgs(program, programArgs, process.cwd()),
 		};
 
 		// Apply stored source-map remappings
@@ -173,12 +229,6 @@ export class DapSession extends BaseSession {
 		// Apply stored symbol paths as pre-run commands
 		if (this._symbolPaths.length > 0) {
 			launchArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
-		}
-
-		// Runtime-specific launch arguments
-		if (this._runtime === "python" || this._runtime === "debugpy") {
-			launchArgs.console = "internalConsole";
-			launchArgs.justMyCode = false;
 		}
 
 		// DAP spec: some adapters (e.g. debugpy) defer the launch response until
@@ -222,18 +272,22 @@ export class DapSession extends BaseSession {
 		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
+		this._isAttached = true;
 
-		const adapterCmd = resolveAdapterCommand(this._runtime);
+		const config = getRuntimeConfig(this._runtime);
+		const adapterCmd = config.resolveCommand();
 		this.dap = DapClient.spawn(adapterCmd);
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
-		// Parse target: could be a PID or a process name
-		const pid = parseInt(target, 10);
-		const attachArgs: Record<string, unknown> = Number.isNaN(pid)
-			? { program: target, waitFor: true }
-			: { pid };
+		let attachArgs: Record<string, unknown>;
+		if (config.parseAttachTarget) {
+			attachArgs = config.parseAttachTarget(target);
+		} else {
+			const pid = parseInt(target, 10);
+			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
+		}
 
 		const attachPromise = this.dap.send("attach", attachArgs);
 		await this.waitForInitialized();
@@ -268,7 +322,8 @@ export class DapSession extends BaseSession {
 	async stop(): Promise<void> {
 		if (this.dap) {
 			try {
-				await this.dap.send("disconnect", { terminateDebuggee: true });
+				// For attached sessions, don't terminate the debuggee
+				await this.dap.send("disconnect", { terminateDebuggee: !this._isAttached });
 			} catch {
 				// Adapter may already be dead
 			}
@@ -278,6 +333,7 @@ export class DapSession extends BaseSession {
 
 		this.resetState();
 		this._stackFrames = [];
+		this._isAttached = false;
 		this.breakpoints.clear();
 		this.allBreakpoints = [];
 		this.functionBreakpoints = [];

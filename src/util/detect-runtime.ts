@@ -47,6 +47,11 @@ const BINARY_PATTERNS: Array<{ pattern: RegExp; entry: BinaryEntry }> = [
 		pattern: /^(uvicorn|gunicorn|flask|django-admin|pytest|mypy)$/,
 		entry: { runtime: "debugpy", stripInterpreter: false },
 	},
+	// Java tools
+	{
+		pattern: /^(mvn|mvnw|gradle|gradlew|mvnDebug)$/,
+		entry: { runtime: "java", stripInterpreter: false },
+	},
 	// Ruby tools
 	{ pattern: /^(rails|rake|rspec|irb)$/, entry: { runtime: "ruby", stripInterpreter: false } },
 	// Elixir tools

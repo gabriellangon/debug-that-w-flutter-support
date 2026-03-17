@@ -396,8 +396,14 @@ describe("detectRuntime", () => {
 		test("build tools return null", () => {
 			expect(detectRuntime({ command: ["cargo", "run"] })).toBeNull();
 			expect(detectRuntime({ command: ["go", "run", "main.go"] })).toBeNull();
-			expect(detectRuntime({ command: ["mvn", "exec:java"] })).toBeNull();
-			expect(detectRuntime({ command: ["gradle", "run"] })).toBeNull();
+		});
+
+		test("Java build tools detect as java runtime", () => {
+			expect(detectRuntime({ command: ["mvn", "exec:java"] })?.runtime).toBe("java");
+			expect(detectRuntime({ command: ["gradle", "run"] })?.runtime).toBe("java");
+			expect(detectRuntime({ command: ["gradlew", "run"] })?.runtime).toBe("java");
+			expect(detectRuntime({ command: ["mvnw", "exec:java"] })?.runtime).toBe("java");
+			expect(detectRuntime({ command: ["mvnDebug", "exec:java"] })?.runtime).toBe("java");
 		});
 
 		test("compilers return null", () => {
