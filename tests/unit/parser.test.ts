@@ -1,49 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { deriveParserConfig } from "../../src/cli/command.ts";
 import { parseArgs } from "../../src/cli/parser.ts";
-
-// Import all commands to register them with defineCommand
-import "../../src/commands/launch.ts";
-import "../../src/commands/attach.ts";
-import "../../src/commands/stop.ts";
-import "../../src/commands/restart.ts";
-import "../../src/commands/sessions.ts";
-import "../../src/commands/status.ts";
-import "../../src/commands/state.ts";
-import "../../src/commands/continue.ts";
-import "../../src/commands/step.ts";
-import "../../src/commands/pause.ts";
-import "../../src/commands/run-to.ts";
-import "../../src/commands/break.ts";
-import "../../src/commands/break-fn.ts";
-import "../../src/commands/break-rm.ts";
-import "../../src/commands/break-ls.ts";
-import "../../src/commands/logpoint.ts";
-import "../../src/commands/catch.ts";
-import "../../src/commands/source.ts";
-import "../../src/commands/scripts.ts";
-import "../../src/commands/modules.ts";
-import "../../src/commands/stack.ts";
-import "../../src/commands/search.ts";
-import "../../src/commands/console.ts";
-import "../../src/commands/exceptions.ts";
-import "../../src/commands/eval.ts";
-import "../../src/commands/vars.ts";
-import "../../src/commands/props.ts";
-import "../../src/commands/blackbox.ts";
-import "../../src/commands/blackbox-ls.ts";
-import "../../src/commands/blackbox-rm.ts";
-import "../../src/commands/set.ts";
-import "../../src/commands/set-return.ts";
-import "../../src/commands/hotpatch.ts";
-import "../../src/commands/break-toggle.ts";
-import "../../src/commands/breakable.ts";
-import "../../src/commands/restart-frame.ts";
-import "../../src/commands/sourcemap.ts";
-import "../../src/commands/path-map.ts";
-import "../../src/commands/symbols.ts";
-import "../../src/commands/install.ts";
-import "../../src/commands/logs.ts";
+import "../../src/commands/index.ts";
 
 const config = deriveParserConfig();
 
@@ -71,7 +29,9 @@ describe("parseArgs", () => {
 		const args = parseArgs(["launch", "--brk", "node", "app.js"], config);
 		expect(args.command).toBe("launch");
 		expect(args.flags.brk).toBe(true);
-		expect(args.positionals).toEqual(["node", "app.js"]);
+		// GNU reordering: operands fill subcommand then positionals
+		expect(args.subcommand).toBe("node");
+		expect(args.positionals).toEqual(["app.js"]);
 	});
 
 	test("parses value flags", () => {
@@ -107,7 +67,9 @@ describe("parseArgs", () => {
 	test("handles -- separator", () => {
 		const args = parseArgs(["launch", "--brk", "--", "node", "--inspect", "app.js"], config);
 		expect(args.flags.brk).toBe(true);
-		expect(args.positionals).toEqual(["node", "--inspect", "app.js"]);
+		// After --, all args are operands: subcommand="node", positionals=["--inspect", "app.js"]
+		expect(args.subcommand).toBe("node");
+		expect(args.positionals).toEqual(["--inspect", "app.js"]);
 	});
 
 	test("parses --help-agent", () => {
@@ -149,6 +111,8 @@ describe("parseArgs", () => {
 		expect(args.global.session).toBe("test");
 		expect(args.flags.port).toBe("9229");
 		expect(args.flags.timeout).toBe("600");
-		expect(args.positionals).toEqual(["node", "app.js"]);
+		// GNU reordering: after --, operands fill subcommand then positionals
+		expect(args.subcommand).toBe("node");
+		expect(args.positionals).toEqual(["app.js"]);
 	});
 });

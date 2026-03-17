@@ -12,80 +12,172 @@ const DEFAULT_SHORT_MAP: Record<string, string> = {
 	V: "version",
 };
 
+// ── Tokenizer ───────────────────────────────────────────────────────
+
+export type Token =
+	| { type: "long-flag"; name: string; value: string } // --key=value
+	| { type: "long-flag"; name: string } // --key
+	| { type: "negation"; name: string } // --no-key
+	| { type: "short-group"; chars: string } // -v, -vsbc
+	| { type: "separator" } // --
+	| { type: "operand"; value: string }; // anything else
+
+export function tokenize(argv: string[]): Token[] {
+	const tokens: Token[] = [];
+	let pastSeparator = false;
+
+	for (const arg of argv) {
+		if (pastSeparator) {
+			tokens.push({ type: "operand", value: arg });
+			continue;
+		}
+
+		if (arg === "--") {
+			tokens.push({ type: "separator" });
+			pastSeparator = true;
+			continue;
+		}
+
+		if (arg.startsWith("--")) {
+			const rest = arg.slice(2);
+			const eqIdx = rest.indexOf("=");
+
+			if (eqIdx !== -1) {
+				tokens.push({
+					type: "long-flag",
+					name: rest.slice(0, eqIdx),
+					value: rest.slice(eqIdx + 1),
+				});
+			} else if (rest.startsWith("no-") && rest.length > 3) {
+				tokens.push({ type: "negation", name: rest.slice(3) });
+			} else {
+				tokens.push({ type: "long-flag", name: rest });
+			}
+			continue;
+		}
+
+		if (arg.startsWith("-") && arg.length > 1) {
+			tokens.push({ type: "short-group", chars: arg.slice(1) });
+			continue;
+		}
+
+		tokens.push({ type: "operand", value: arg });
+	}
+
+	return tokens;
+}
+
+// ── Parser ──────────────────────────────────────────────────────────
+
 export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 	const booleanFlags = config
 		? new Set([...DEFAULT_BOOLEAN_FLAGS, ...config.booleanFlags])
 		: DEFAULT_BOOLEAN_FLAGS;
 	const shortMap = config ? { ...DEFAULT_SHORT_MAP, ...config.shortMap } : DEFAULT_SHORT_MAP;
 
+	const tokens = tokenize(argv);
 	const flags: Record<string, string | boolean> = {};
-	const positionals: string[] = [];
-	let command = "";
-	let subcommand: string | null = null;
+	const operands: string[] = [];
 
 	let i = 0;
+	while (i < tokens.length) {
+		const tok = tokens[i];
+		if (!tok) break;
 
-	// Extract command (first non-flag argument)
-	while (i < argv.length) {
-		const arg = argv[i];
-		if (arg === undefined) break;
-		if (arg.startsWith("-")) break;
-		if (!command) {
-			command = arg;
-		} else if (!subcommand) {
-			subcommand = arg;
-		} else {
-			positionals.push(arg);
-		}
-		i++;
-	}
-
-	// Parse remaining arguments
-	while (i < argv.length) {
-		const arg = argv[i];
-		if (arg === undefined) {
-			i++;
-			continue;
-		}
-
-		if (arg === "--") {
-			// Everything after -- is positional
-			i++;
-			while (i < argv.length) {
-				const rest = argv[i];
-				if (rest !== undefined) positionals.push(rest);
+		switch (tok.type) {
+			case "operand": {
+				operands.push(tok.value);
 				i++;
+				break;
 			}
-			break;
-		}
 
-		if (arg.startsWith("--")) {
-			const key = arg.slice(2);
-			if (booleanFlags.has(key)) {
-				flags[key] = true;
-			} else {
-				const next = argv[i + 1];
-				if (next !== undefined && !next.startsWith("-")) {
-					flags[key] = next;
-					i++;
+			case "separator": {
+				// All subsequent tokens are already operands from tokenizer
+				i++;
+				break;
+			}
+
+			case "long-flag": {
+				if ("value" in tok) {
+					// --key=value (inline)
+					if (booleanFlags.has(tok.name)) {
+						flags[tok.name] = tok.value === "" || tok.value === "true" || tok.value === "1";
+					} else {
+						flags[tok.name] = tok.value;
+					}
+				} else if (booleanFlags.has(tok.name)) {
+					flags[tok.name] = true;
 				} else {
-					flags[key] = true;
+					// Value flag — unconditionally consume next token as value
+					const next = tokens[i + 1];
+					if (next && next.type !== "separator") {
+						const val = next.type === "operand" ? next.value : reconstructToken(next);
+						flags[tok.name] = val;
+						i++;
+					} else {
+						flags[tok.name] = true;
+					}
 				}
+				i++;
+				break;
 			}
-		} else if (arg.startsWith("-") && arg.length === 2) {
-			// Short flags
-			const key = arg.slice(1);
-			const mapped = shortMap[key];
-			if (mapped) {
-				flags[mapped] = true;
-			} else {
-				flags[key] = true;
+
+			case "negation": {
+				if (booleanFlags.has(tok.name)) {
+					flags[tok.name] = false;
+				} else {
+					// Not a known boolean — treat as unknown flag "no-<name>"
+					const flagName = `no-${tok.name}`;
+					const next = tokens[i + 1];
+					if (next && next.type === "operand" && !next.value.startsWith("-")) {
+						flags[flagName] = next.value;
+						i++;
+					} else {
+						flags[flagName] = true;
+					}
+				}
+				i++;
+				break;
 			}
-		} else {
-			positionals.push(arg);
+
+			case "short-group": {
+				const { chars } = tok;
+				for (let ci = 0; ci < chars.length; ci++) {
+					const ch = chars[ci];
+					if (!ch) continue;
+					const mapped = shortMap[ch] ?? ch;
+
+					if (booleanFlags.has(mapped)) {
+						flags[mapped] = true;
+					} else {
+						// Value flag — remaining chars become value (POSIX: -f9229 → f="9229")
+						const remainder = chars.slice(ci + 1);
+						if (remainder.length > 0) {
+							flags[mapped] = remainder;
+						} else {
+							// No remaining chars — consume next token as value
+							const next = tokens[i + 1];
+							if (next && next.type !== "separator") {
+								const val = next.type === "operand" ? next.value : reconstructToken(next);
+								flags[mapped] = val;
+								i++;
+							} else {
+								flags[mapped] = true;
+							}
+						}
+						break; // Stop processing group after value flag
+					}
+				}
+				i++;
+				break;
+			}
 		}
-		i++;
 	}
+
+	// Distribute operands into command / subcommand / positionals
+	const command = operands[0] ?? "";
+	const subcommand = operands[1] ?? null;
+	const positionals = operands.slice(2);
 
 	const global: GlobalFlags = {
 		session: typeof flags.session === "string" ? flags.session : "default",
@@ -102,6 +194,22 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 	}
 
 	return { command, subcommand, positionals, flags, global };
+}
+
+/** Reconstruct the original argv string from a non-operand token (for consuming as value). */
+function reconstructToken(tok: Token): string {
+	switch (tok.type) {
+		case "long-flag":
+			return "value" in tok ? `--${tok.name}=${tok.value}` : `--${tok.name}`;
+		case "negation":
+			return `--no-${tok.name}`;
+		case "short-group":
+			return `-${tok.chars}`;
+		case "separator":
+			return "--";
+		case "operand":
+			return tok.value;
+	}
 }
 
 export async function run(args: ParsedArgs): Promise<number> {
@@ -160,7 +268,8 @@ function printVersion(): void {
 
 function suggestCommand(input: string): string | null {
 	let bestMatch: string | null = null;
-	let bestScore = 3; // max edit distance to suggest
+	// Scale threshold by input length — short inputs get stricter matching
+	let bestScore = Math.min(3, Math.floor(input.length / 2) + 1);
 	for (const name of registry.keys()) {
 		const dist = editDistance(input, name);
 		if (dist < bestScore) {
