@@ -72,20 +72,20 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			return { ok: true, data: "pong" };
 
 		case "launch": {
-			const { command, brk = true, port, runtime } = req.args;
+			const { command, brk = true, port, runtime, device, toolArgs } = req.args;
 			activeSession = createSession(session, runtime, { daemonLogger });
 			activeSession.applyPendingConfig(pendingConfig);
 			resetConfig();
-			const result = await activeSession.launch(command, { brk, port });
+			const result = await activeSession.launch(command, { brk, port, device, toolArgs });
 			return { ok: true, data: result };
 		}
 
 		case "attach": {
-			const { target, runtime } = req.args;
+			const { target, runtime, toolArgs } = req.args;
 			activeSession = createSession(session, runtime, { daemonLogger });
 			activeSession.applyPendingConfig(pendingConfig);
 			resetConfig();
-			const result = await activeSession.attach(target);
+			const result = await activeSession.attach(target, { toolArgs });
 			return { ok: true, data: result };
 		}
 

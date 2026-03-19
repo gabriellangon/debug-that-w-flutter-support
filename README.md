@@ -18,12 +18,14 @@ Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browse
 | Node.js + tsx/ts-node | TypeScript | Supported | V8 Inspector (CDP) + Source Maps |
 | Bun | JavaScript / TypeScript | Supported | WebKit Inspector (JSC) |
 | LLDB | C / C++ / Rust / Swift | Supported | DAP (Debug Adapter Protocol) |
+| Dart | Dart | Supported | DAP |
+| Flutter | Dart / Flutter | Supported (baseline) | DAP |
 | Deno | JavaScript / TypeScript | Planned | V8 Inspector (CDP) |
 | Python (debugpy) | Python | Supported | DAP |
 | Go (delve) | Go | Planned | DAP |
 | Java (JDWP) | Java / Kotlin | Planned | DAP |
 
-dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter. For native languages, use `--runtime lldb` to select the DAP adapter.
+dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter for `node`, `bun`, `dart`, and `flutter`. For native languages, use `--runtime lldb` to select the DAP adapter.
 
 ## Install
 
@@ -81,11 +83,23 @@ dbg launch --brk tsx src/app.ts
 # Bun
 dbg launch --brk bun app.ts
 
+# Dart
+dbg launch --brk dart bin/main.dart
+
+# Flutter
+dbg launch --brk flutter lib/main.dart --device macos
+
 # C/C++ (via LLDB)
 dbg launch --brk --runtime lldb ./my_program
 
 # Attach to a running process (any runtime with --inspect)
 dbg attach 9229
+
+# Attach to a Dart / Flutter VM Service
+dbg attach ws://127.0.0.1:12345/abc=/ws
+
+# Let Flutter discover a running app
+dbg attach --runtime flutter
 
 # Debug loop
 dbg break src/handler.ts:42

@@ -90,6 +90,19 @@ export interface LaunchResult {
 	pauseInfo?: PauseInfo;
 }
 
+export interface LaunchOptions {
+	brk?: boolean;
+	port?: number;
+	program?: string;
+	args?: string[];
+	device?: string;
+	toolArgs?: string[];
+}
+
+export interface AttachOptions {
+	toolArgs?: string[];
+}
+
 export interface AttachResult {
 	wsUrl: string;
 }

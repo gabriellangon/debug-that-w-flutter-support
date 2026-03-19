@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import { registry } from "./registry.ts";
-import { getMeta, isBooleanSchema } from "./schema-utils.ts";
+import { getMeta, isArraySchema, isBooleanSchema } from "./schema-utils.ts";
 import type { GlobalFlags, ParsedArgs } from "./types.ts";
 
 // ── Positional patterns ─────────────────────────────────────────────
@@ -184,6 +184,7 @@ export function defineCommand<const P extends PositionalSpec, F extends z.ZodObj
 
 export interface ParserConfig {
 	booleanFlags: Set<string>;
+	arrayFlags: Set<string>;
 	shortMap: Record<string, string>;
 }
 
@@ -193,6 +194,7 @@ export interface ParserConfig {
  */
 export function deriveParserConfig(): ParserConfig {
 	const booleanFlags = new Set<string>();
+	const arrayFlags = new Set<string>();
 	const shortMap: Record<string, string> = {};
 
 	for (const spec of commandDefs.values()) {
@@ -201,6 +203,9 @@ export function deriveParserConfig(): ParserConfig {
 			if (isBooleanSchema(schema as z.ZodType)) {
 				booleanFlags.add(key);
 			}
+			if (isArraySchema(schema as z.ZodType)) {
+				arrayFlags.add(key);
+			}
 			const meta = getMeta(schema as z.ZodType);
 			if (meta?.short) {
 				shortMap[meta.short] = key;
@@ -208,5 +213,5 @@ export function deriveParserConfig(): ParserConfig {
 		}
 	}
 
-	return { booleanFlags, shortMap };
+	return { booleanFlags, arrayFlags, shortMap };
 }

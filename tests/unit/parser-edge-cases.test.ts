@@ -127,6 +127,23 @@ describe("parseArgs — POSIX & GNU conventions", () => {
 			expect(args.flags.condition).toBe("b");
 		});
 
+		test("repeatable array flags accumulate in order", () => {
+			const args = parseArgs(
+				[
+					"launch",
+					"--runtime",
+					"flutter",
+					"--tool-arg",
+					"--app-id",
+					"--tool-arg",
+					"com.example.app",
+					"lib/main.dart",
+				],
+				config,
+			);
+			expect(args.flags["tool-arg"]).toEqual(["--app-id", "com.example.app"]);
+		});
+
 		test("only -- with no args after", () => {
 			const args = parseArgs(["launch", "--"], config);
 			expect(args.command).toBe("launch");

@@ -1,10 +1,18 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
-import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
+import { FLUTTER_INITIAL_STOP_TIMEOUT_MS, INITIALIZED_TIMEOUT_MS } from "../constants.ts";
 import { BaseSession } from "../session/base-session.ts";
 import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
-import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
+import type {
+	AttachOptions,
+	AttachResult,
+	LaunchOptions,
+	LaunchResult,
+	SessionStatus,
+	StateOptions,
+	StateSnapshot,
+} from "../session/types.ts";
 import { getJavaAdapterClasspath, isJavaAdapterInstalled } from "./adapters/index.ts";
 import { DapClient } from "./client.ts";
 
@@ -17,15 +25,30 @@ export function getManagedAdaptersDir(): string {
 // ── Runtime-specific configuration ───────────────────────────────
 
 interface DapRuntimeConfig {
-	resolveCommand(): string[];
-	buildLaunchArgs(program: string, programArgs: string[], cwd: string): Record<string, unknown>;
-	parseAttachTarget?(target: string): Record<string, unknown>;
+	resolveCommand(mode?: "launch" | "attach"): string[];
+	buildLaunchArgs(
+		program: string,
+		programArgs: string[],
+		cwd: string,
+		options: LaunchOptions,
+	): Record<string, unknown>;
+	parseAttachTarget?(
+		target: string | undefined,
+		cwd: string,
+		options: AttachOptions,
+	): Record<string, unknown>;
 }
 
-const DEFAULT_LAUNCH: DapRuntimeConfig["buildLaunchArgs"] = (program, programArgs, cwd) => ({
+const DEFAULT_LAUNCH: DapRuntimeConfig["buildLaunchArgs"] = (
+	program,
+	programArgs,
+	cwd,
+	options,
+) => ({
 	program,
 	args: programArgs,
 	cwd,
+	stopOnEntry: options.brk ?? true,
 });
 
 const lldbConfig: DapRuntimeConfig = {
@@ -45,10 +68,11 @@ const debugpyConfig: DapRuntimeConfig = {
 		const pyBin = Bun.which("python3") ? "python3" : "python";
 		return [pyBin, "-m", "debugpy.adapter"];
 	},
-	buildLaunchArgs: (program, programArgs, cwd) => ({
+	buildLaunchArgs: (program, programArgs, cwd, options) => ({
 		program,
 		args: programArgs,
 		cwd,
+		stopOnEntry: options.brk ?? true,
 		console: "internalConsole",
 		justMyCode: false,
 	}),
@@ -62,7 +86,7 @@ const javaConfig: DapRuntimeConfig = {
 		const cp = getJavaAdapterClasspath();
 		return ["java", "-cp", cp, "com.debugthat.adapter.Main"];
 	},
-	buildLaunchArgs(program, programArgs, _cwd) {
+	buildLaunchArgs(program, programArgs, _cwd, _options) {
 		const basename = program.split("/").pop() ?? program;
 		const mainClass = basename.replace(/\.(java|class)$/, "");
 		// classPaths must point to where .class files live (typically same dir as .java)
@@ -79,6 +103,9 @@ const javaConfig: DapRuntimeConfig = {
 		};
 	},
 	parseAttachTarget(target) {
+		if (!target) {
+			throw new Error("Attach for java requires a host:port target.");
+		}
 		const colonIdx = target.lastIndexOf(":");
 		if (colonIdx > 0) {
 			return {
@@ -88,6 +115,70 @@ const javaConfig: DapRuntimeConfig = {
 		}
 		const port = parseInt(target, 10);
 		return { hostName: "localhost", port: Number.isNaN(port) ? 5005 : port };
+	},
+};
+
+const dartConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		return ["dart", "debug_adapter"];
+	},
+	buildLaunchArgs(program, programArgs, cwd, options) {
+		const toolArgs = [...(options.toolArgs ?? [])];
+		if (options.brk !== false) {
+			toolArgs.push("--pause-isolates-on-start");
+		}
+		return {
+			program,
+			args: programArgs,
+			cwd,
+			...(toolArgs.length > 0 ? { toolArgs } : {}),
+		};
+	},
+	parseAttachTarget(target, cwd) {
+		if (!target || !isVmServiceTarget(target)) {
+			throw new Error(
+				"Attach for dart requires a VM Service URL (for example ws://127.0.0.1:12345/abc=/ws).",
+			);
+		}
+		return { vmServiceUri: target, cwd };
+	},
+};
+
+const flutterConfig: DapRuntimeConfig = {
+	resolveCommand(mode) {
+		const base = ["flutter", "debug-adapter"];
+		return mode === "attach" ? [...base, "--no-dds"] : base;
+	},
+	buildLaunchArgs(program, programArgs, cwd, options) {
+		const toolArgs: string[] = [];
+		if (options.device) {
+			toolArgs.push("-d", options.device);
+		}
+		toolArgs.push(...(options.toolArgs ?? []));
+		return {
+			program,
+			args: programArgs,
+			cwd,
+			...(toolArgs.length > 0 ? { toolArgs } : {}),
+		};
+	},
+	parseAttachTarget(target, cwd, options) {
+		if (!target) {
+			return {
+				cwd,
+				...(options.toolArgs && options.toolArgs.length > 0 ? { toolArgs: options.toolArgs } : {}),
+			};
+		}
+		if (!isVmServiceTarget(target)) {
+			throw new Error(
+				"Attach for flutter requires a VM Service URL, or omit the target to let Flutter discover a running app.",
+			);
+		}
+		return {
+			vmServiceUri: target,
+			cwd,
+			...(options.toolArgs && options.toolArgs.length > 0 ? { toolArgs: options.toolArgs } : {}),
+		};
 	},
 };
 
@@ -101,6 +192,8 @@ const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
 	python: debugpyConfig,
 	debugpy: debugpyConfig,
 	java: javaConfig,
+	dart: dartConfig,
+	flutter: flutterConfig,
 };
 
 function getRuntimeConfig(runtime: string): DapRuntimeConfig {
@@ -110,6 +203,18 @@ function getRuntimeConfig(runtime: string): DapRuntimeConfig {
 			buildLaunchArgs: DEFAULT_LAUNCH,
 		}
 	);
+}
+
+function isDartRuntime(runtime: string): boolean {
+	return runtime === "dart";
+}
+
+function isFlutterRuntime(runtime: string): boolean {
+	return runtime === "flutter";
+}
+
+function isVmServiceTarget(target: string): boolean {
+	return /^https?:\/\//.test(target) || /^wss?:\/\//.test(target);
 }
 
 interface DapBreakpointEntry {
@@ -139,6 +244,11 @@ interface DapStackFrame {
 	column: number;
 }
 
+interface DapThreadInfo {
+	id: number;
+	name?: string;
+}
+
 /**
  * DapSession implements the same public interface as CdpSession, but communicates
  * with a DAP debug adapter (e.g. lldb-dap) instead of CDP/V8. This allows debug-that
@@ -148,9 +258,11 @@ export class DapSession extends BaseSession {
 	private dap: DapClient | null = null;
 	private _runtime: string;
 	private _isAttached = false; // true if session was created via attach (not launch)
-	private _threadId = 1; // Most adapters use thread 1; updated on "stopped" event
+	private _threadId: number | null = 1;
+	private _threads: DapThreadInfo[] = [];
 	private _stackFrames: DapStackFrame[] = [];
 	private adapterCapabilities: DebugProtocol.Capabilities = {};
+	private initialized = false;
 
 	// Breakpoints: DAP requires sending ALL breakpoints per file at once
 	private breakpoints = new Map<string, DapBreakpointEntry[]>();
@@ -199,27 +311,31 @@ export class DapSession extends BaseSession {
 
 	// ── Lifecycle ─────────────────────────────────────────────────────
 
-	async launch(
-		command: string[],
-		options: { brk?: boolean; port?: number; program?: string; args?: string[] } = {},
-	): Promise<LaunchResult> {
+	async launch(command: string[], options: LaunchOptions = {}): Promise<LaunchResult> {
 		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.resolveCommand();
+		const adapterCmd = config.resolveCommand("launch");
 		this.dap = DapClient.spawn(adapterCmd);
+		this.initialized = false;
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
 		const program = options.program ?? command[0] ?? "";
 		const programArgs = options.args ?? command.slice(1);
-		const launchArgs: Record<string, unknown> = {
-			stopOnEntry: options.brk ?? true,
-			...config.buildLaunchArgs(program, programArgs, process.cwd()),
-		};
+		const launchArgs: Record<string, unknown> = config.buildLaunchArgs(
+			program,
+			programArgs,
+			process.cwd(),
+			options,
+		);
+		const flutterEntryBreakpoint =
+			isFlutterRuntime(this._runtime) && options.brk !== false
+				? this.resolveDartEntryBreakpoint(program, process.cwd())
+				: null;
 
 		// Apply stored source-map remappings
 		if (this._remaps.length > 0) {
@@ -236,12 +352,23 @@ export class DapSession extends BaseSession {
 		// "initialized" event, then send configurationDone, then await launch.
 		const launchPromise = this.dap.send("launch", launchArgs);
 		await this.waitForInitialized();
+		if (flutterEntryBreakpoint) {
+			await this.setTemporaryBreakpoint(flutterEntryBreakpoint.file, flutterEntryBreakpoint.line);
+		}
 		await this.dap.send("configurationDone");
 		await launchPromise;
+		await this.refreshThreads();
+		await this.waitForThreads(2_000);
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
-			await this.waitForStop(5_000);
+			const stopTimeout = isFlutterRuntime(this._runtime) ? FLUTTER_INITIAL_STOP_TIMEOUT_MS : 5_000;
+			if (flutterEntryBreakpoint) {
+				await this.waitForPauseMatch(stopTimeout, (pauseInfo) => pauseInfo?.reason === "breakpoint");
+				await this.clearTemporaryBreakpoint(flutterEntryBreakpoint.file).catch(() => {});
+			} else {
+				await this.waitForStop(stopTimeout);
+			}
 			if (!this.isPaused()) {
 				const errors = this.consoleMessages
 					.filter((m) => m.level === "error")
@@ -268,23 +395,27 @@ export class DapSession extends BaseSession {
 		return result;
 	}
 
-	async attach(target: string): Promise<{ wsUrl: string }> {
+	async attach(target?: string, options: AttachOptions = {}): Promise<AttachResult> {
 		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
 		this._isAttached = true;
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.resolveCommand();
+		const adapterCmd = config.resolveCommand("attach");
 		this.dap = DapClient.spawn(adapterCmd);
+		this.initialized = false;
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
 		let attachArgs: Record<string, unknown>;
 		if (config.parseAttachTarget) {
-			attachArgs = config.parseAttachTarget(target);
+			attachArgs = config.parseAttachTarget(target, process.cwd(), options);
 		} else {
+			if (!target) {
+				throw new Error("Attach requires a PID, port, process name, or WebSocket URL.");
+			}
 			const pid = parseInt(target, 10);
 			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
 		}
@@ -293,6 +424,8 @@ export class DapSession extends BaseSession {
 		await this.waitForInitialized();
 		await this.dap.send("configurationDone");
 		await attachPromise;
+		await this.refreshThreads();
+		await this.waitForThreads(2_000);
 
 		// Wait briefly for initial stop
 		await this.waitForStop(5_000).catch(() => {
@@ -304,7 +437,7 @@ export class DapSession extends BaseSession {
 			this.state = "running";
 		}
 
-		return { wsUrl: `dap://${this._runtime}/${target}` };
+		return { wsUrl: target ? `dap://${this._runtime}/${target}` : `dap://${this._runtime}` };
 	}
 
 	getStatus(): SessionStatus {
@@ -334,6 +467,9 @@ export class DapSession extends BaseSession {
 		this.resetState();
 		this._stackFrames = [];
 		this._isAttached = false;
+		this._threadId = null;
+		this._threads = [];
+		this.initialized = false;
 		this.breakpoints.clear();
 		this.allBreakpoints = [];
 		this.functionBreakpoints = [];
@@ -351,7 +487,8 @@ export class DapSession extends BaseSession {
 		this.refs.clearVolatile();
 
 		const waiter = this.createStoppedWaiter(30_000);
-		await this.getDap().send("continue", { threadId: this._threadId });
+		const threadId = await this.getPreferredThreadId();
+		await this.getDap().send("continue", { threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -366,7 +503,8 @@ export class DapSession extends BaseSession {
 
 		const waiter = this.createStoppedWaiter(30_000);
 		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
-		await this.getDap().send(command, { threadId: this._threadId });
+		const threadId = await this.getPreferredThreadId();
+		await this.getDap().send(command, { threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -378,7 +516,8 @@ export class DapSession extends BaseSession {
 		}
 
 		const waiter = this.createStoppedWaiter(5_000);
-		await this.getDap().send("pause", { threadId: this._threadId });
+		const threadId = await this.getPreferredThreadId();
+		await this.getDap().send("pause", { threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -1164,6 +1303,23 @@ export class DapSession extends BaseSession {
 	private setupEventHandlers(): void {
 		const dap = this.getDap();
 
+		dap.on("initialized", () => {
+			this.initialized = true;
+		});
+
+		dap.on("thread", (body: unknown) => {
+			const event = body as { reason?: string; threadId?: number };
+			if (event.reason === "exited" && event.threadId !== undefined) {
+				this._threads = this._threads.filter((thread) => thread.id !== event.threadId);
+				if (this._threadId === event.threadId) {
+					this._threadId = this._threads[0]?.id ?? null;
+				}
+				return;
+			}
+
+			this.refreshThreads().catch(() => {});
+		});
+
 		dap.on("stopped", (body: unknown) => {
 			const event = body as {
 				reason: string;
@@ -1172,6 +1328,20 @@ export class DapSession extends BaseSession {
 				text?: string;
 				allThreadsStopped?: boolean;
 			};
+
+			if (event.reason === "exit") {
+				this.state = "idle";
+				this.pauseInfo = null;
+				this._stackFrames = [];
+				this._threadId = null;
+				this._threads = [];
+				this.refs.clearVolatile();
+				if (this.stoppedWaiter) {
+					this.stoppedWaiter.resolve();
+					this.stoppedWaiter = null;
+				}
+				return;
+			}
 
 			this.state = "paused";
 			if (event.threadId !== undefined) {
@@ -1203,6 +1373,8 @@ export class DapSession extends BaseSession {
 			this.state = "idle";
 			this.pauseInfo = null;
 			this._stackFrames = [];
+			this._threadId = null;
+			this._threads = [];
 
 			// Resolve any waiting promise — the caller checks isPaused() to
 			// distinguish normal completion from unexpected termination.
@@ -1213,6 +1385,8 @@ export class DapSession extends BaseSession {
 		dap.on("exited", (_body: unknown) => {
 			this.state = "idle";
 			this.pauseInfo = null;
+			this._threadId = null;
+			this._threads = [];
 
 			this.stoppedWaiter?.resolve();
 			this.stoppedWaiter = null;
@@ -1264,42 +1438,70 @@ export class DapSession extends BaseSession {
 	private async _fetchStackTraceImpl(): Promise<void> {
 		if (!this.dap || this.state !== "paused") return;
 
-		try {
-			const response = await this.dap.send("stackTrace", {
-				threadId: this._threadId,
-				startFrame: 0,
-				levels: 50,
-			});
-
-			const body = response.body as {
-				stackFrames: Array<{
-					id: number;
-					name: string;
-					source?: { path?: string; name?: string };
-					line: number;
-					column: number;
-				}>;
-			};
-
-			this._stackFrames = body.stackFrames.map((f) => ({
-				id: f.id,
-				name: f.name,
-				file: f.source?.path ?? f.source?.name,
-				line: f.line,
-				column: f.column,
-			}));
-
-			// Update pauseInfo with top-of-stack location
-			const topFrame = this._stackFrames[0];
-			if (topFrame && this.pauseInfo) {
-				this.pauseInfo.url = topFrame.file;
-				this.pauseInfo.line = topFrame.line;
-				this.pauseInfo.column = topFrame.column > 0 ? topFrame.column : undefined;
-				this.pauseInfo.callFrameCount = this._stackFrames.length;
-			}
-		} catch {
-			// Stack trace may not be available
+		const threadIds = await this.getThreadCandidates();
+		if (threadIds.length === 0) {
+			return;
 		}
+
+		for (const threadId of threadIds) {
+			try {
+				// Dart/Flutter adapters sometimes expose only the top frame on the first request.
+				const topFrameOnly = await this.requestStackFrames(threadId, 1);
+				const fullStack =
+					topFrameOnly.length > 0 ? await this.requestStackFrames(threadId, 50) : [];
+				const stackFrames =
+					fullStack.length >= topFrameOnly.length && fullStack.length > 0
+						? fullStack
+						: topFrameOnly;
+
+				if (stackFrames.length === 0) {
+					continue;
+				}
+
+				this._threadId = threadId;
+				this._stackFrames = stackFrames;
+
+				// Update pauseInfo with top-of-stack location
+				const topFrame = this._stackFrames[0];
+				if (topFrame && this.pauseInfo) {
+					this.pauseInfo.url = topFrame.file;
+					this.pauseInfo.line = topFrame.line;
+					this.pauseInfo.column = topFrame.column > 0 ? topFrame.column : undefined;
+					this.pauseInfo.callFrameCount = this._stackFrames.length;
+				}
+				return;
+			} catch {
+				// Try the next available thread.
+			}
+		}
+
+		this._stackFrames = [];
+	}
+
+	private async requestStackFrames(threadId: number, levels: number): Promise<DapStackFrame[]> {
+		const response = await this.getDap().send("stackTrace", {
+			threadId,
+			startFrame: 0,
+			levels,
+		});
+
+		const body = response.body as {
+			stackFrames: Array<{
+				id: number;
+				name: string;
+				source?: { path?: string; name?: string };
+				line: number;
+				column: number;
+			}>;
+		};
+
+		return body.stackFrames.map((f) => ({
+			id: f.id,
+			name: f.name,
+			file: f.source?.path ?? f.source?.name,
+			line: f.line,
+			column: f.column,
+		}));
 	}
 
 	private resolveFrameId(frameRef?: string): number {
@@ -1317,6 +1519,122 @@ export class DapSession extends BaseSession {
 			throw new Error(`Unknown frame ref: ${frameRef}`);
 		}
 		return parseInt(remoteId, 10);
+	}
+
+	private async refreshThreads(): Promise<DapThreadInfo[]> {
+		if (!this.dap || !this.dap.connected) {
+			return this._threads;
+		}
+
+		try {
+			const response = await this.dap.send("threads");
+			const threads = (
+				(
+					response.body as {
+						threads?: Array<{ id: number; name?: string }>;
+					}
+				)?.threads ?? []
+			)
+				.filter((thread): thread is { id: number; name?: string } => typeof thread.id === "number")
+				.map((thread) => ({
+					id: thread.id,
+					name: thread.name,
+				}));
+
+			this._threads = threads;
+			if (threads.length === 0) {
+				this._threadId = null;
+			} else if (
+				this._threadId === null ||
+				!threads.some((thread) => thread.id === this._threadId)
+			) {
+				this._threadId = threads[0]?.id ?? null;
+			}
+		} catch {
+			// Some adapters may not return threads while booting.
+		}
+
+		return this._threads;
+	}
+
+	private async getThreadCandidates(): Promise<number[]> {
+		let threads = await this.refreshThreads();
+		if (threads.length === 0) {
+			threads = await this.waitForThreads(2_000);
+		}
+		const ids = threads.map((thread) => thread.id);
+		if (this._threadId === null) {
+			if (ids.length > 0) {
+				return ids;
+			}
+			return isDartRuntime(this._runtime) || isFlutterRuntime(this._runtime) ? [1] : [];
+		}
+		return [this._threadId, ...ids.filter((id) => id !== this._threadId)];
+	}
+
+	private async getPreferredThreadId(): Promise<number> {
+		const threadIds = await this.getThreadCandidates();
+		const threadId = threadIds[0];
+		if (threadId === undefined) {
+			throw new Error("No DAP threads available");
+		}
+		this._threadId = threadId;
+		return threadId;
+	}
+
+	private async waitForThreads(timeoutMs: number): Promise<DapThreadInfo[]> {
+		const start = Date.now();
+		let threads = this._threads;
+		while (threads.length === 0 && Date.now() - start < timeoutMs) {
+			await Bun.sleep(250);
+			threads = await this.refreshThreads();
+		}
+		return threads;
+	}
+
+	private resolveDartEntryBreakpoint(
+		program: string,
+		cwd: string,
+	): { file: string; line: number } | null {
+		if (!program) {
+			return null;
+		}
+
+		const file = isAbsolute(program) ? program : resolve(cwd, program);
+		if (!existsSync(file)) {
+			return null;
+		}
+
+		try {
+			const source = readFileSync(file, "utf8");
+			const lines = source.split(/\r?\n/);
+			for (let index = 0; index < lines.length; index++) {
+				const line = lines[index];
+				if (
+					line &&
+					/^\s*(?:Future(?:<[^>]+>)?\s+)?(?:void\s+)?main\s*\(/.test(line)
+				) {
+					return { file, line: index + 1 };
+				}
+			}
+			return { file, line: 1 };
+		} catch {
+			return null;
+		}
+	}
+
+	private async setTemporaryBreakpoint(file: string, line: number): Promise<void> {
+		await this.getDap().send("setBreakpoints", {
+			source: { path: file },
+			breakpoints: [{ line }],
+		});
+	}
+
+	private async clearTemporaryBreakpoint(file: string): Promise<void> {
+		await this.getDap().send("setBreakpoints", {
+			source: { path: file },
+			breakpoints: [],
+		});
 	}
 
 	private async syncFileBreakpoints(file: string): Promise<void> {
@@ -1377,12 +1695,32 @@ export class DapSession extends BaseSession {
 		});
 	}
 
+	private async waitForPauseMatch(
+		timeoutMs: number,
+		matches: (pauseInfo: SessionStatus["pauseInfo"] | null) => boolean,
+	): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			if (this.isPaused() && matches(this.pauseInfo)) {
+				if (this._stackFrames.length === 0) {
+					await this.fetchStackTrace();
+				}
+				return;
+			}
+
+			await this.createStoppedWaiter(Math.min(1_000, Math.max(1, deadline - Date.now())));
+		}
+	}
+
 	/**
 	 * Wait for the DAP "initialized" event. Some adapters send this during
 	 * launch/attach; we must receive it before sending configurationDone.
 	 */
 	private async waitForInitialized(): Promise<void> {
 		const dap = this.getDap();
+		if (this.initialized) {
+			return;
+		}
 		return new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				dap.off("initialized", handler);

@@ -211,6 +211,13 @@ BLACKBOXING:
   dbg blackbox-ls               List current patterns
   dbg blackbox-rm <pattern|all> Remove patterns
 
+DART / FLUTTER:
+  dbg launch --brk dart bin/main.dart
+  dbg launch --brk flutter lib/main.dart --device macos
+  dbg launch --brk flutter lib/main.dart --tool-arg --app-id --tool-arg com.example.app
+  dbg attach ws://127.0.0.1:12345/abc=/ws
+  dbg attach --runtime flutter
+
 SOURCE MAPS:
   dbg sourcemap [file]          Show source map info
   dbg sourcemap --disable       Disable resolution globally

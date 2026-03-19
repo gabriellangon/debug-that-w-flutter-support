@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { detectRuntime } from "../../src/util/detect-runtime.ts";
+import { detectAttachRuntime, detectRuntime } from "../../src/util/detect-runtime.ts";
 
 describe("detectRuntime", () => {
 	describe("ExplicitDetector — --runtime flag always wins", () => {
@@ -194,6 +194,26 @@ describe("detectRuntime", () => {
 			expect(result?.runtime).toBe("dlv");
 			expect(result?.stripInterpreter).toBe(false);
 		});
+
+		test("dart script → dart, strips interpreter", () => {
+			const result = detectRuntime({ command: ["dart", "bin/main.dart"] });
+			expect(result?.runtime).toBe("dart");
+			expect(result?.stripInterpreter).toBe(true);
+		});
+
+		test("flutter app → flutter, strips interpreter", () => {
+			const result = detectRuntime({ command: ["flutter", "lib/main.dart"] });
+			expect(result?.runtime).toBe("flutter");
+			expect(result?.stripInterpreter).toBe(true);
+		});
+
+		test("dart run is not auto-detected as adapter launch", () => {
+			expect(detectRuntime({ command: ["dart", "run", "bin/main.dart"] })).toBeNull();
+		});
+
+		test("flutter run is not auto-detected as adapter launch", () => {
+			expect(detectRuntime({ command: ["flutter", "run", "lib/main.dart"] })).toBeNull();
+		});
 	});
 
 	describe("BinaryNameDetector — secondary tools", () => {
@@ -263,6 +283,18 @@ describe("detectRuntime", () => {
 				const result = detectRuntime({ command: [cmd, "arg"] });
 				expect(result?.stripInterpreter).toBe(false);
 			}
+		});
+	});
+
+	describe("detectAttachRuntime", () => {
+		test("VM service URL → dart runtime", () => {
+			const result = detectAttachRuntime("ws://127.0.0.1:12345/abc=/ws");
+			expect(result?.runtime).toBe("dart");
+			expect(result?.stripInterpreter).toBe(false);
+		});
+
+		test("non VM service target is ignored", () => {
+			expect(detectAttachRuntime("localhost:9229")).toBeNull();
 		});
 	});
 

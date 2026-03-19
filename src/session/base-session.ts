@@ -19,8 +19,11 @@ import type {
 	VarEntry,
 } from "./session.ts";
 import type {
+	AttachOptions,
+	AttachResult,
 	ConsoleMessage,
 	ExceptionEntry,
+	LaunchOptions,
 	LaunchResult,
 	PauseInfo,
 	SessionStatus,
@@ -134,11 +137,8 @@ export abstract class BaseSession implements Session {
 
 	// ── Abstract methods (protocol-specific) ──────────────────────────
 
-	abstract launch(
-		command: string[],
-		options?: { brk?: boolean; port?: number },
-	): Promise<LaunchResult>;
-	abstract attach(target: string): Promise<{ wsUrl: string }>;
+	abstract launch(command: string[], options?: LaunchOptions): Promise<LaunchResult>;
+	abstract attach(target?: string, options?: AttachOptions): Promise<AttachResult>;
 	abstract getStatus(): SessionStatus;
 	abstract stop(): Promise<void>;
 	abstract restart(): Promise<LaunchResult>;

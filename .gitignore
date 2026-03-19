@@ -33,6 +33,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
+# Local agent metadata and notes
+.agents/
+docs/dbg_flutter_status_*.md
+
 # C test fixture build artifacts
 tests/fixtures/c/hello
 tests/fixtures/c/*.dSYM

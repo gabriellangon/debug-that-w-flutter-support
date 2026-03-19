@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
+import { FLUTTER_DAEMON_REQUEST_TIMEOUT_MS } from "../constants.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
 import { shortPath } from "../formatter/path.ts";
@@ -16,6 +17,11 @@ defineCommand({
 		port: z.coerce.number().optional().meta({ description: "Inspector port" }),
 		timeout: z.coerce.number().optional().meta({ description: "Daemon startup timeout" }),
 		runtime: z.string().optional().meta({ description: "Runtime override" }),
+		device: z.string().optional().meta({ description: "Flutter device id" }),
+		"tool-arg": z
+			.array(z.string())
+			.optional()
+			.meta({ description: "Repeatable adapter/tool argument" }),
 	}),
 	handler: async (ctx) => {
 		const session = ctx.global.session;
@@ -40,6 +46,10 @@ defineCommand({
 			brk: ctx.flags.brk || false,
 			port: ctx.flags.port,
 			runtime,
+			device: ctx.flags.device,
+			toolArgs: ctx.flags["tool-arg"],
+		}, {
+			timeoutMs: runtime === "flutter" ? FLUTTER_DAEMON_REQUEST_TIMEOUT_MS : undefined,
 		});
 
 		if (!response.ok) {

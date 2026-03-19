@@ -1,7 +1,7 @@
 import type { ParserConfig } from "./command.ts";
 import { generateCommandHelp, printHelp, printHelpAgent } from "./help.ts";
 import { registry } from "./registry.ts";
-import type { GlobalFlags, ParsedArgs } from "./types.ts";
+import type { FlagValue, GlobalFlags, ParsedArgs } from "./types.ts";
 
 const GLOBAL_FLAGS = new Set(["session", "json", "color", "help-agent", "help", "version"]);
 
@@ -73,11 +73,31 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 	const booleanFlags = config
 		? new Set([...DEFAULT_BOOLEAN_FLAGS, ...config.booleanFlags])
 		: DEFAULT_BOOLEAN_FLAGS;
+	const arrayFlags = config?.arrayFlags ?? new Set<string>();
 	const shortMap = config ? { ...DEFAULT_SHORT_MAP, ...config.shortMap } : DEFAULT_SHORT_MAP;
 
 	const tokens = tokenize(argv);
-	const flags: Record<string, string | boolean> = {};
+	const flags: Record<string, FlagValue> = {};
 	const operands: string[] = [];
+
+	function assignFlag(name: string, value: string | boolean): void {
+		if (!arrayFlags.has(name)) {
+			flags[name] = value;
+			return;
+		}
+
+		const nextValue = typeof value === "string" ? value : String(value);
+		const current = flags[name];
+		if (Array.isArray(current)) {
+			current.push(nextValue);
+			return;
+		}
+		if (typeof current === "string") {
+			flags[name] = [current, nextValue];
+			return;
+		}
+		flags[name] = [nextValue];
+	}
 
 	let i = 0;
 	while (i < tokens.length) {
@@ -101,21 +121,21 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 				if ("value" in tok) {
 					// --key=value (inline)
 					if (booleanFlags.has(tok.name)) {
-						flags[tok.name] = tok.value === "" || tok.value === "true" || tok.value === "1";
+						assignFlag(tok.name, tok.value === "" || tok.value === "true" || tok.value === "1");
 					} else {
-						flags[tok.name] = tok.value;
+						assignFlag(tok.name, tok.value);
 					}
 				} else if (booleanFlags.has(tok.name)) {
-					flags[tok.name] = true;
+					assignFlag(tok.name, true);
 				} else {
 					// Value flag — unconditionally consume next token as value
 					const next = tokens[i + 1];
 					if (next && next.type !== "separator") {
 						const val = next.type === "operand" ? next.value : reconstructToken(next);
-						flags[tok.name] = val;
+						assignFlag(tok.name, val);
 						i++;
 					} else {
-						flags[tok.name] = true;
+						assignFlag(tok.name, true);
 					}
 				}
 				i++;
@@ -124,16 +144,16 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 
 			case "negation": {
 				if (booleanFlags.has(tok.name)) {
-					flags[tok.name] = false;
+					assignFlag(tok.name, false);
 				} else {
 					// Not a known boolean — treat as unknown flag "no-<name>"
 					const flagName = `no-${tok.name}`;
 					const next = tokens[i + 1];
 					if (next && next.type === "operand" && !next.value.startsWith("-")) {
-						flags[flagName] = next.value;
+						assignFlag(flagName, next.value);
 						i++;
 					} else {
-						flags[flagName] = true;
+						assignFlag(flagName, true);
 					}
 				}
 				i++;
@@ -148,21 +168,21 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 					const mapped = shortMap[ch] ?? ch;
 
 					if (booleanFlags.has(mapped)) {
-						flags[mapped] = true;
+						assignFlag(mapped, true);
 					} else {
 						// Value flag — remaining chars become value (POSIX: -f9229 → f="9229")
 						const remainder = chars.slice(ci + 1);
 						if (remainder.length > 0) {
-							flags[mapped] = remainder;
+							assignFlag(mapped, remainder);
 						} else {
 							// No remaining chars — consume next token as value
 							const next = tokens[i + 1];
 							if (next && next.type !== "separator") {
 								const val = next.type === "operand" ? next.value : reconstructToken(next);
-								flags[mapped] = val;
+								assignFlag(mapped, val);
 								i++;
 							} else {
-								flags[mapped] = true;
+								assignFlag(mapped, true);
 							}
 						}
 						break; // Stop processing group after value flag

@@ -1,6 +1,9 @@
 import type {
+	AttachOptions,
+	AttachResult,
 	ConsoleMessage,
 	ExceptionEntry,
+	LaunchOptions,
 	LaunchResult,
 	SessionStatus,
 	StateOptions,
@@ -166,8 +169,8 @@ export interface Session {
 	disableSourceMaps(): void;
 
 	// ── Lifecycle ──────────────────────────────────────────────────
-	launch(command: string[], options?: { brk?: boolean; port?: number }): Promise<LaunchResult>;
-	attach(target: string): Promise<{ wsUrl: string }>;
+	launch(command: string[], options?: LaunchOptions): Promise<LaunchResult>;
+	attach(target?: string, options?: AttachOptions): Promise<AttachResult>;
 	applyPendingConfig(config: PendingConfig): void;
 	getStatus(): SessionStatus;
 	stop(): Promise<void>;

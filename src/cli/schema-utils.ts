@@ -21,6 +21,14 @@ export function isBooleanSchema(schema: z.ZodType): boolean {
 }
 
 /**
+ * Check if a schema (after unwrapping optional) is an array type.
+ */
+export function isArraySchema(schema: z.ZodType): boolean {
+	const inner = unwrapSchema(schema);
+	return (inner as unknown as { _zod: { def: { type: string } } })._zod.def.type === "array";
+}
+
+/**
  * Get metadata from a Zod schema via globalRegistry.
  */
 export function getMeta(schema: z.ZodType): { description?: string; short?: string } | undefined {

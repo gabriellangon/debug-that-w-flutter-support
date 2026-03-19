@@ -7,9 +7,11 @@ import { formatValue } from "../formatter/values.ts";
 import { BaseSession } from "../session/base-session.ts";
 import type { BreakpointListItem, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
+	AttachOptions,
 	AttachResult,
 	ConsoleMessage,
 	ExceptionEntry,
+	LaunchOptions,
 	LaunchResult,
 	ResolvedLocation,
 	SessionStatus,
@@ -97,7 +99,7 @@ export class CdpSession extends BaseSession {
 	}> = [];
 	private _pendingRebinds = new Set<Promise<void>>();
 	launchCommand: string[] | null = null;
-	launchOptions: { brk?: boolean; port?: number } | null = null;
+	launchOptions: LaunchOptions | null = null;
 	adapter: CdpDialect;
 	cdpLogger: CdpLogger;
 	daemonLogger: DaemonLogger;
@@ -151,10 +153,7 @@ export class CdpSession extends BaseSession {
 
 	// ── Session lifecycle ─────────────────────────────────────────────
 
-	async launch(
-		command: string[],
-		options: { brk?: boolean; port?: number } = {},
-	): Promise<LaunchResult> {
+	async launch(command: string[], options: LaunchOptions = {}): Promise<LaunchResult> {
 		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
@@ -244,7 +243,11 @@ export class CdpSession extends BaseSession {
 		return result;
 	}
 
-	async attach(target: string): Promise<AttachResult> {
+	async attach(target?: string, _options: AttachOptions = {}): Promise<AttachResult> {
+		if (!target) {
+			throw new Error("Attach requires a PID, port, or WebSocket URL.");
+		}
+
 		if (this.state !== "idle" && !this.cdp) {
 			throw new Error("Session already has an active debug target");
 		}

@@ -58,6 +58,18 @@ const BINARY_PATTERNS: Array<{ pattern: RegExp; entry: BinaryEntry }> = [
 	{ pattern: /^(iex|mix)$/, entry: { runtime: "elixir", stripInterpreter: false } },
 ];
 
+function isVmServiceUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) {
+			return false;
+		}
+		return url.pathname.endsWith("/ws") || /\/[^/]+=\/?$/.test(url.pathname);
+	} catch {
+		return false;
+	}
+}
+
 function basename(cmd: string): string {
 	return cmd.split("/").pop() ?? cmd;
 }
@@ -88,11 +100,40 @@ export function detectRuntime(ctx: DetectionContext): RuntimeDetection | null {
 	const cmd = ctx.command[0];
 	if (!cmd) return null;
 
+	const name = basename(cmd);
+	const entrypoint = ctx.command[1];
+	if (name === "dart" && entrypoint && !entrypoint.startsWith("-") && entrypoint !== "run") {
+		return {
+			runtime: "dart",
+			stripInterpreter: true,
+			confidence: "high",
+		};
+	}
+	if (name === "flutter" && entrypoint && !entrypoint.startsWith("-") && entrypoint !== "run") {
+		return {
+			runtime: "flutter",
+			stripInterpreter: true,
+			confidence: "high",
+		};
+	}
+
 	const match = matchBinary(cmd);
 	if (match) {
 		return {
 			runtime: match.runtime,
 			stripInterpreter: match.stripInterpreter,
+			confidence: "high",
+		};
+	}
+
+	return null;
+}
+
+export function detectAttachRuntime(target: string): RuntimeDetection | null {
+	if (isVmServiceUrl(target)) {
+		return {
+			runtime: "dart",
+			stripInterpreter: false,
 			confidence: "high",
 		};
 	}

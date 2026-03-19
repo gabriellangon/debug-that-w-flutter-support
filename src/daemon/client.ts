@@ -20,10 +20,15 @@ export class DaemonClient {
 		this.socketPath = getSocketPath(session);
 	}
 
-	async request<C extends Cmd>(cmd: C, args?: ArgsForCmd<C>): Promise<TypedResponse<C>> {
+	async request<C extends Cmd>(
+		cmd: C,
+		args?: ArgsForCmd<C>,
+		options: { timeoutMs?: number } = {},
+	): Promise<TypedResponse<C>> {
 		const message = `${JSON.stringify({ cmd, args: args ?? {} })}\n`;
 		const sessionName = this.session;
 		const socketPath = this.socketPath;
+		const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 
 		return new Promise<TypedResponse<C>>((resolve, reject) => {
 			let buffer = "";
@@ -32,9 +37,9 @@ export class DaemonClient {
 			const timer = setTimeout(() => {
 				if (!settled) {
 					settled = true;
-					reject(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+					reject(new Error(`Request timed out after ${timeoutMs}ms`));
 				}
-			}, REQUEST_TIMEOUT_MS);
+			}, timeoutMs);
 
 			function settle(fn: () => void) {
 				if (!settled) {
