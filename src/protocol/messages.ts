@@ -282,7 +282,26 @@ const ModulesRequest = z.object({
 	}),
 });
 
-export const DaemonRequestSchema = z.union([
+const PathMapAddRequest = z.object({
+	cmd: z.literal("path-map-add"),
+	args: z.object({
+		from: z.string(),
+		to: z.string(),
+	}),
+});
+
+const PathMapListRequest = z.object({ cmd: z.literal("path-map-list") });
+
+const PathMapClearRequest = z.object({ cmd: z.literal("path-map-clear") });
+
+const SymbolsAddRequest = z.object({
+	cmd: z.literal("symbols-add"),
+	args: z.object({
+		path: z.string(),
+	}),
+});
+
+export const DaemonRequestSchema = z.discriminatedUnion("cmd", [
 	PingRequest,
 	LaunchRequest,
 	AttachRequest,
@@ -321,6 +340,10 @@ export const DaemonRequestSchema = z.union([
 	SourcemapDisableRequest,
 	StopRequest,
 	ModulesRequest,
+	PathMapAddRequest,
+	PathMapListRequest,
+	PathMapClearRequest,
+	SymbolsAddRequest,
 ]);
 
 export type DaemonRequest = z.infer<typeof DaemonRequestSchema>;
@@ -334,10 +357,22 @@ const SuccessResponse = z.object({
 
 const ErrorResponse = z.object({
 	ok: z.literal(false),
-	error: z.optional(z.string()),
+	error: z.string(),
 	suggestion: z.optional(z.string()),
 });
 
 export const DaemonResponseSchema = z.union([SuccessResponse, ErrorResponse]);
 
 export type DaemonResponse = z.infer<typeof DaemonResponseSchema>;
+export type ErrorResponse = z.infer<typeof ErrorResponse>;
+export type SuccessResponse = z.infer<typeof SuccessResponse>;
+
+export function isError(response: unknown): response is ErrorResponse {
+	return typeof response === "object" && response !== null && "error" in response;
+}
+
+export function isSuccess(response: unknown): response is SuccessResponse {
+	return (
+		typeof response === "object" && response !== null && "ok" in response && response.ok === true
+	);
+}

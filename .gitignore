@@ -3,7 +3,7 @@ node_modules
 
 # output
 out
-dist
+/dist
 *.tgz
 
 # code coverage
@@ -33,9 +33,17 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
-# DAP test fixture build artifacts
-tests/fixtures/dap/hello
-tests/fixtures/dap/*.dSYM
-!tests/fixtures/ts-app/dist/
-!tests/fixtures/ts-app/dist/app.js
-!tests/fixtures/ts-app/dist/app.js.map
+# Local agent metadata and notes
+.agents/
+docs/dbg_flutter_status_*.md
+
+# C test fixture build artifacts
+tests/fixtures/c/hello
+tests/fixtures/c/*.dSYM
+
+# Java build artifacts
+*.class
+tests/fixtures/java/multi-package/out/
+
+# Generated at build time
+src/dap/adapters/java/adapter-sources.tar.gz

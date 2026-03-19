@@ -3,7 +3,7 @@ import { withDebuggerSession, withPausedSession, withSession } from "../../helpe
 
 describe("Mutation: setVariable", () => {
 	test("set variable changes value", () =>
-		withDebuggerSession("test-set-var", "tests/fixtures/mutation-app.js", async (session) => {
+		withDebuggerSession("test-set-var", "tests/fixtures/js/mutation-app.js", async (session) => {
 			const result = await session.setVariable("counter", "42");
 			expect(result.name).toBe("counter");
 			expect(result.newValue).toBe("42");
@@ -12,11 +12,15 @@ describe("Mutation: setVariable", () => {
 		}));
 
 	test("set variable returns old value", () =>
-		withDebuggerSession("test-set-var-old", "tests/fixtures/mutation-app.js", async (session) => {
-			const result = await session.setVariable("counter", "99");
-			expect(result.oldValue).toBe("0");
-			expect(result.newValue).toBe("99");
-		}));
+		withDebuggerSession(
+			"test-set-var-old",
+			"tests/fixtures/js/mutation-app.js",
+			async (session) => {
+				const result = await session.setVariable("counter", "99");
+				expect(result.oldValue).toBe("0");
+				expect(result.newValue).toBe("99");
+			},
+		));
 
 	test("set variable throws when not paused", () =>
 		withSession("test-set-var-not-paused", async (session) => {
@@ -27,7 +31,7 @@ describe("Mutation: setVariable", () => {
 
 describe("Mutation: setReturnValue", () => {
 	test("set-return changes return value", () =>
-		withDebuggerSession("test-set-return", "tests/fixtures/mutation-app.js", async (session) => {
+		withDebuggerSession("test-set-return", "tests/fixtures/js/mutation-app.js", async (session) => {
 			await session.step("into");
 			await session.waitForState("paused");
 			await session.step("into");
@@ -44,7 +48,7 @@ describe("Mutation: setReturnValue", () => {
 
 describe("Mutation: hotpatch", () => {
 	test("hotpatch replaces script source", () =>
-		withDebuggerSession("test-hotpatch", "tests/fixtures/mutation-app.js", async (session) => {
+		withDebuggerSession("test-hotpatch", "tests/fixtures/js/mutation-app.js", async (session) => {
 			const source = await session.getSource({ file: "mutation-app.js", all: true });
 			const modified = source.lines
 				.map((l) => l.text)
@@ -57,19 +61,23 @@ describe("Mutation: hotpatch", () => {
 		}));
 
 	test("hotpatch dry-run does not modify source", () =>
-		withDebuggerSession("test-hotpatch-dry", "tests/fixtures/mutation-app.js", async (session) => {
-			const source = await session.getSource({ file: "mutation-app.js", all: true });
-			const original = source.lines.map((l) => l.text).join("\n");
-			const modified = original.replace("counter++", "counter += 100");
-			await session.hotpatch("mutation-app.js", modified, { dryRun: true });
-			const after = await session.getSource({ file: "mutation-app.js", all: true });
-			expect(after.lines.map((l) => l.text).join("\n")).toContain("counter++");
-		}));
+		withDebuggerSession(
+			"test-hotpatch-dry",
+			"tests/fixtures/js/mutation-app.js",
+			async (session) => {
+				const source = await session.getSource({ file: "mutation-app.js", all: true });
+				const original = source.lines.map((l) => l.text).join("\n");
+				const modified = original.replace("counter++", "counter += 100");
+				await session.hotpatch("mutation-app.js", modified, { dryRun: true });
+				const after = await session.getSource({ file: "mutation-app.js", all: true });
+				expect(after.lines.map((l) => l.text).join("\n")).toContain("counter++");
+			},
+		));
 
 	test("hotpatch works when edited function is on the call stack", () =>
 		withPausedSession(
 			"test-hotpatch-active-fn",
-			"tests/fixtures/hotpatch-active-fn.js",
+			"tests/fixtures/js/hotpatch-active-fn.js",
 			async (session) => {
 				await session.continue();
 				await session.waitForState("paused");
@@ -89,7 +97,7 @@ describe("Mutation: hotpatch", () => {
 	test("hotpatch throws for unknown file", () =>
 		withDebuggerSession(
 			"test-hotpatch-unknown",
-			"tests/fixtures/mutation-app.js",
+			"tests/fixtures/js/mutation-app.js",
 			async (session) => {
 				await expect(session.hotpatch("nonexistent-file.js", "// new source")).rejects.toThrow(
 					"No loaded script",

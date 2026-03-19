@@ -1,153 +1,203 @@
+import type { ParserConfig } from "./command.ts";
+import { generateCommandHelp, printHelp, printHelpAgent } from "./help.ts";
 import { registry } from "./registry.ts";
-import type { GlobalFlags, ParsedArgs } from "./types.ts";
+import type { FlagValue, GlobalFlags, ParsedArgs } from "./types.ts";
 
 const GLOBAL_FLAGS = new Set(["session", "json", "color", "help-agent", "help", "version"]);
-const REPEATABLE_VALUE_FLAGS = new Set(["tool-arg"]);
-const VALUE_FLAGS_ALLOW_LEADING_DASH = new Set(["tool-arg"]);
-const BOOLEAN_FLAGS = new Set([
-	"json",
-	"color",
-	"help-agent",
-	"help",
-	"brk",
-	"compact",
-	"all-scopes",
-	"vars",
-	"stack",
-	"breakpoints",
-	"code",
-	"own",
-	"private",
-	"internal",
-	"regex",
-	"case-sensitive",
-	"detailed",
-	"follow",
-	"clear",
-	"uncovered",
-	"include-gc",
-	"silent",
-	"side-effect-free",
-	"sourcemap",
-	"dry-run",
-	"continue",
-	"all",
-	"cleanup",
-	"disable",
-	"generated",
-	"version",
-]);
 
-function setLongFlag(
-	flags: Record<string, string | boolean | string[]>,
-	key: string,
-	next: string | undefined,
-): number {
-	if (BOOLEAN_FLAGS.has(key)) {
-		flags[key] = true;
-		return 0;
-	}
+// Hardcoded defaults — merged with derived config from defineCommand() schemas
+const DEFAULT_BOOLEAN_FLAGS = new Set(["json", "color", "help-agent", "help", "version"]);
 
-	const canUseNext =
-		next !== undefined && (VALUE_FLAGS_ALLOW_LEADING_DASH.has(key) || !next.startsWith("-"));
+const DEFAULT_SHORT_MAP: Record<string, string> = {
+	V: "version",
+};
 
-	if (!canUseNext) {
-		flags[key] = true;
-		return 0;
-	}
+// ── Tokenizer ───────────────────────────────────────────────────────
 
-	if (REPEATABLE_VALUE_FLAGS.has(key)) {
-		const existing = flags[key];
-		const values = Array.isArray(existing)
-			? [...existing, next]
-			: typeof existing === "string"
-				? [existing, next]
-				: [next];
-		flags[key] = values;
-	} else {
-		flags[key] = next;
-	}
+export type Token =
+	| { type: "long-flag"; name: string; value: string } // --key=value
+	| { type: "long-flag"; name: string } // --key
+	| { type: "negation"; name: string } // --no-key
+	| { type: "short-group"; chars: string } // -v, -vsbc
+	| { type: "separator" } // --
+	| { type: "operand"; value: string }; // anything else
 
-	return 1;
-}
+export function tokenize(argv: string[]): Token[] {
+	const tokens: Token[] = [];
+	let pastSeparator = false;
 
-export function parseArgs(argv: string[]): ParsedArgs {
-	const flags: Record<string, string | boolean | string[]> = {};
-	const positionals: string[] = [];
-	let command = "";
-	let subcommand: string | null = null;
-
-	let i = 0;
-
-	// Accept leading global flags before the command, e.g. "dbg --session foo status".
-	while (i < argv.length) {
-		const arg = argv[i];
-		if (arg === undefined) break;
-		if (!arg.startsWith("--")) break;
-		const key = arg.slice(2);
-		if (!GLOBAL_FLAGS.has(key)) break;
-		i += 1 + setLongFlag(flags, key, argv[i + 1]);
-	}
-
-	// Extract command (first non-flag argument)
-	while (i < argv.length) {
-		const arg = argv[i];
-		if (arg === undefined) break;
-		if (arg.startsWith("-")) break;
-		if (!command) {
-			command = arg;
-		} else if (!subcommand) {
-			subcommand = arg;
-		} else {
-			positionals.push(arg);
-		}
-		i++;
-	}
-
-	// Parse remaining arguments
-	while (i < argv.length) {
-		const arg = argv[i];
-		if (arg === undefined) {
-			i++;
+	for (const arg of argv) {
+		if (pastSeparator) {
+			tokens.push({ type: "operand", value: arg });
 			continue;
 		}
 
 		if (arg === "--") {
-			// Everything after -- is positional
-			i++;
-			while (i < argv.length) {
-				const rest = argv[i];
-				if (rest !== undefined) positionals.push(rest);
-				i++;
-			}
-			break;
+			tokens.push({ type: "separator" });
+			pastSeparator = true;
+			continue;
 		}
 
 		if (arg.startsWith("--")) {
-			const key = arg.slice(2);
-			i += setLongFlag(flags, key, argv[i + 1]);
-		} else if (arg.startsWith("-") && arg.length === 2) {
-			// Short flags
-			const key = arg.slice(1);
-			const shortMap: Record<string, string> = {
-				v: "vars",
-				V: "version",
-				s: "stack",
-				b: "breakpoints",
-				c: "code",
-				f: "follow",
-			};
-			const mapped = shortMap[key];
-			if (mapped) {
-				flags[mapped] = true;
+			const rest = arg.slice(2);
+			const eqIdx = rest.indexOf("=");
+
+			if (eqIdx !== -1) {
+				tokens.push({
+					type: "long-flag",
+					name: rest.slice(0, eqIdx),
+					value: rest.slice(eqIdx + 1),
+				});
+			} else if (rest.startsWith("no-") && rest.length > 3) {
+				tokens.push({ type: "negation", name: rest.slice(3) });
 			} else {
-				flags[key] = true;
+				tokens.push({ type: "long-flag", name: rest });
 			}
-		} else {
-			positionals.push(arg);
+			continue;
 		}
-		i++;
+
+		if (arg.startsWith("-") && arg.length > 1) {
+			tokens.push({ type: "short-group", chars: arg.slice(1) });
+			continue;
+		}
+
+		tokens.push({ type: "operand", value: arg });
 	}
+
+	return tokens;
+}
+
+// ── Parser ──────────────────────────────────────────────────────────
+
+export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
+	const booleanFlags = config
+		? new Set([...DEFAULT_BOOLEAN_FLAGS, ...config.booleanFlags])
+		: DEFAULT_BOOLEAN_FLAGS;
+	const arrayFlags = config?.arrayFlags ?? new Set<string>();
+	const shortMap = config ? { ...DEFAULT_SHORT_MAP, ...config.shortMap } : DEFAULT_SHORT_MAP;
+
+	const tokens = tokenize(argv);
+	const flags: Record<string, FlagValue> = {};
+	const operands: string[] = [];
+
+	function assignFlag(name: string, value: string | boolean): void {
+		if (!arrayFlags.has(name)) {
+			flags[name] = value;
+			return;
+		}
+
+		const nextValue = typeof value === "string" ? value : String(value);
+		const current = flags[name];
+		if (Array.isArray(current)) {
+			current.push(nextValue);
+			return;
+		}
+		if (typeof current === "string") {
+			flags[name] = [current, nextValue];
+			return;
+		}
+		flags[name] = [nextValue];
+	}
+
+	let i = 0;
+	while (i < tokens.length) {
+		const tok = tokens[i];
+		if (!tok) break;
+
+		switch (tok.type) {
+			case "operand": {
+				operands.push(tok.value);
+				i++;
+				break;
+			}
+
+			case "separator": {
+				// All subsequent tokens are already operands from tokenizer
+				i++;
+				break;
+			}
+
+			case "long-flag": {
+				if ("value" in tok) {
+					// --key=value (inline)
+					if (booleanFlags.has(tok.name)) {
+						assignFlag(tok.name, tok.value === "" || tok.value === "true" || tok.value === "1");
+					} else {
+						assignFlag(tok.name, tok.value);
+					}
+				} else if (booleanFlags.has(tok.name)) {
+					assignFlag(tok.name, true);
+				} else {
+					// Value flag — unconditionally consume next token as value
+					const next = tokens[i + 1];
+					if (next && next.type !== "separator") {
+						const val = next.type === "operand" ? next.value : reconstructToken(next);
+						assignFlag(tok.name, val);
+						i++;
+					} else {
+						assignFlag(tok.name, true);
+					}
+				}
+				i++;
+				break;
+			}
+
+			case "negation": {
+				if (booleanFlags.has(tok.name)) {
+					assignFlag(tok.name, false);
+				} else {
+					// Not a known boolean — treat as unknown flag "no-<name>"
+					const flagName = `no-${tok.name}`;
+					const next = tokens[i + 1];
+					if (next && next.type === "operand" && !next.value.startsWith("-")) {
+						assignFlag(flagName, next.value);
+						i++;
+					} else {
+						assignFlag(flagName, true);
+					}
+				}
+				i++;
+				break;
+			}
+
+			case "short-group": {
+				const { chars } = tok;
+				for (let ci = 0; ci < chars.length; ci++) {
+					const ch = chars[ci];
+					if (!ch) continue;
+					const mapped = shortMap[ch] ?? ch;
+
+					if (booleanFlags.has(mapped)) {
+						assignFlag(mapped, true);
+					} else {
+						// Value flag — remaining chars become value (POSIX: -f9229 → f="9229")
+						const remainder = chars.slice(ci + 1);
+						if (remainder.length > 0) {
+							assignFlag(mapped, remainder);
+						} else {
+							// No remaining chars — consume next token as value
+							const next = tokens[i + 1];
+							if (next && next.type !== "separator") {
+								const val = next.type === "operand" ? next.value : reconstructToken(next);
+								assignFlag(mapped, val);
+								i++;
+							} else {
+								assignFlag(mapped, true);
+							}
+						}
+						break; // Stop processing group after value flag
+					}
+				}
+				i++;
+				break;
+			}
+		}
+	}
+
+	// Distribute operands into command / subcommand / positionals
+	const command = operands[0] ?? "";
+	const subcommand = operands[1] ?? null;
+	const positionals = operands.slice(2);
 
 	const global: GlobalFlags = {
 		session: typeof flags.session === "string" ? flags.session : "default",
@@ -166,6 +216,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
 	return { command, subcommand, positionals, flags, global };
 }
 
+/** Reconstruct the original argv string from a non-operand token (for consuming as value). */
+function reconstructToken(tok: Token): string {
+	switch (tok.type) {
+		case "long-flag":
+			return "value" in tok ? `--${tok.name}=${tok.value}` : `--${tok.name}`;
+		case "negation":
+			return `--no-${tok.name}`;
+		case "short-group":
+			return `-${tok.chars}`;
+		case "separator":
+			return "--";
+		case "operand":
+			return tok.value;
+	}
+}
+
 export async function run(args: ParsedArgs): Promise<number> {
 	if (args.global.helpAgent) {
 		printHelpAgent();
@@ -178,6 +244,13 @@ export async function run(args: ParsedArgs): Promise<number> {
 	}
 
 	if (!args.command || args.global.help) {
+		if (args.global.help && args.command) {
+			const cmdHelp = generateCommandHelp(args.command);
+			if (cmdHelp) {
+				console.log(cmdHelp);
+				return 0;
+			}
+		}
 		printHelp();
 		return args.command ? 0 : 1;
 	}
@@ -215,7 +288,8 @@ function printVersion(): void {
 
 function suggestCommand(input: string): string | null {
 	let bestMatch: string | null = null;
-	let bestScore = 3; // max edit distance to suggest
+	// Scale threshold by input length — short inputs get stricter matching
+	let bestScore = Math.min(3, Math.floor(input.length / 2) + 1);
 	for (const name of registry.keys()) {
 		const dist = editDistance(input, name);
 		if (dist < bestScore) {
@@ -240,162 +314,4 @@ function editDistance(a: string, b: string): number {
 		prev = curr;
 	}
 	return prev[n] ?? m;
-}
-
-function printHelp(): void {
-	console.log(`dbg — Debugger CLI for AI agents
-
-Usage: dbg <command> [options]
-
-Session:
-  launch [--brk] <command...>      Start + attach debugger
-    [--device <id>] [--tool-arg <arg>] [--runtime <name>] [--dsym <path>] [--source-map <from>:<to>]
-  attach [pid|ws-url|port]         Attach to running process / VM service
-    [--runtime flutter]            Omit target to let Flutter discover a running app
-  stop                             Kill process + daemon
-  sessions [--cleanup]             List active sessions
-  status                           Session info
-
-Execution (returns state automatically):
-  continue                         Resume execution
-  step [over|into|out]             Step one statement
-  run-to <file>:<line>             Continue to location
-  pause                            Interrupt running process
-  restart-frame [@fN]              Re-execute frame from beginning
-
-Inspection:
-  state [-v|-s|-b|-c]              Debug state snapshot
-    [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
-  vars [name...]                   Show local variables
-    [--frame @fN] [--all-scopes] [--all]
-  stack [--async-depth N]          Show call stack
-    [--generated] [--filter <keyword>]
-  eval <expression>                Evaluate expression
-    [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
-  props <@ref>                     Expand object properties
-    [--own] [--depth N] [--private] [--internal]
-  source [--lines N]               Show source code
-    [--file <path>] [--all] [--generated]
-  search <query>                   Search loaded scripts
-    [--regex] [--case-sensitive] [--file <id>]
-  scripts [--filter <pattern>]     List loaded scripts
-  modules [--filter <pattern>]     List loaded modules/libraries (DAP only)
-  console [--since N] [--level]    Console output
-    [--clear]
-  exceptions [--since N]           Captured exceptions
-
-Breakpoints:
-  break <file>:<line>              Set breakpoint
-    [--condition <expr>] [--hit-count <n>] [--continue] [--pattern <regex>:<line>]
-  break-rm <BP#|all>               Remove breakpoint
-  break-ls                         List breakpoints
-  break-toggle <BP#|all>           Enable/disable breakpoints
-  breakable <file>:<start>-<end>   List valid breakpoint locations
-  logpoint <file>:<line> <tpl>     Set logpoint
-    [--condition <expr>]
-  catch [all|uncaught|caught|none] Pause on exceptions
-
-Mutation:
-  set <@ref|name> <value>          Change variable value
-  set-return <value>               Change return value (at return point)
-  hotpatch <file> [--dry-run]      Live-edit script source
-
-Blackboxing:
-  blackbox <pattern...>            Skip stepping into matching scripts
-  blackbox-ls                      List current patterns
-  blackbox-rm <pattern|all>        Remove patterns
-
-Source Maps:
-  sourcemap [file]                 Show source map info
-  sourcemap --disable              Disable resolution globally
-
-Setup:
-  install <adapter>                Download managed adapter binary
-  install --list                   Show installed adapters
-
-Diagnostics:
-  logs [-f|--follow]               Show CDP protocol log
-    [--limit N] [--domain <name>] [--clear]
-
-Global flags:
-  --session NAME                   Target session (default: "default")
-  --json                           JSON output
-  --color                          ANSI colors
-  --help-agent                     LLM reference card
-  --help                           Show this help
-  --version                        Show version`);
-}
-
-function printHelpAgent(): void {
-	console.log(`dbg — Debugger CLI for AI agents
-
-CORE LOOP:
-  1. dbg launch --brk "node app.js"    → pauses at first line, returns state
-  2. dbg break src/file.ts:42          → set breakpoint
-  3. dbg continue                      → run to breakpoint, returns state
-  4. Inspect: dbg vars, dbg eval, dbg props @v1
-  5. Mutate/fix: dbg set @v1 value, dbg hotpatch src/file.ts
-  6. Repeat from 3
-
-REFS: Every output assigns @refs. Use them everywhere:
-  @v1..@vN  variables    |  dbg props @v1, dbg set @v2 true
-  @f0..@fN  stack frames |  dbg eval --frame @f1
-  BP#1..N   breakpoints  |  dbg break-rm BP#1, dbg break-toggle BP#1
-
-EXECUTION (all return state automatically):
-  dbg continue              Resume to next breakpoint
-  dbg step [over|into|out]  Step one statement
-  dbg run-to file:line      Continue to location
-  dbg pause                 Interrupt running process
-  dbg restart-frame [@fN]   Re-run frame from beginning
-
-BREAKPOINTS:
-  dbg break file:line [--condition expr] [--hit-count N] [--continue]
-  dbg break --pattern "regex":line
-  dbg break-rm <BP#|all>    Remove breakpoints
-  dbg break-ls              List breakpoints
-  dbg break-toggle <BP#|all>  Enable/disable breakpoints
-  dbg breakable file:start-end  Valid breakpoint locations
-  dbg logpoint file:line "template \${var}" [--condition expr]
-  dbg catch [all|uncaught|caught|none]
-
-INSPECTION:
-  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
-  dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
-  dbg stack [--async-depth N] [--generated] [--filter <keyword>]
-  dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
-  dbg props @ref [--own] [--depth N] [--private] [--internal]
-  dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
-  dbg source [--lines N] [--file path] [--all] [--generated]
-  dbg search "query" [--regex] [--case-sensitive] [--file id]
-  dbg scripts [--filter pattern]
-  dbg console [--since N] [--level type] [--clear]
-  dbg exceptions [--since N]
-
-MUTATION:
-  dbg set <@ref|name> <value>   Change variable
-  dbg set-return <value>        Change return value (at return point)
-  dbg hotpatch <file> [--dry-run]  Live-edit code (no restart!)
-
-BLACKBOXING:
-  dbg blackbox <pattern...>     Skip stepping into matching scripts
-  dbg blackbox-ls               List current patterns
-  dbg blackbox-rm <pattern|all> Remove patterns
-
-SOURCE MAPS:
-  dbg sourcemap [file]          Show source map info
-  dbg sourcemap --disable       Disable resolution globally
-
-DIAGNOSTICS:
-  dbg logs [-f|--follow]        Show CDP protocol log
-  dbg logs --limit 100          Show last N entries (default: 50)
-  dbg logs --domain Debugger    Filter by CDP domain
-  dbg logs --clear              Clear the log file
-
-DART / FLUTTER:
-  dbg launch --brk dart bin/main.dart
-  dbg launch --brk flutter lib/main.dart --tool-arg -d --tool-arg macos
-  dbg launch --brk python app.py
-  dbg attach ws://127.0.0.1:12345/abc=/ws
-  dbg attach --runtime flutter`);
 }

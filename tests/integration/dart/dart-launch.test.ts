@@ -4,7 +4,7 @@ import { DapSession } from "../../../src/dap/session.ts";
 
 const HAS_DART = Bun.spawnSync(["which", "dart"]).exitCode === 0;
 
-const HELLO_SCRIPT = resolve("tests/fixtures/dap/hello.dart");
+const HELLO_SCRIPT = resolve("tests/fixtures/dart/hello.dart");
 
 async function withDapSession(
 	name: string,

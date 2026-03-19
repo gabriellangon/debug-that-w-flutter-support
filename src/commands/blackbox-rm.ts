@@ -1,57 +1,41 @@
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("blackbox-rm", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "blackbox-rm",
+	description: "Remove patterns",
+	usage: "blackbox-rm <pattern|all>",
+	category: "blackboxing",
+	positional: {
+		kind: "variadic",
+		name: "pattern",
+		required: true,
+		description: "Patterns or 'all'",
+	},
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const patterns = ctx.positional;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
+		// When "all" is specified, only send ["all"]
+		const toSend = patterns[0] === "all" ? ["all"] : patterns;
 
-	const patterns: string[] = [];
-	if (args.subcommand) {
-		if (args.subcommand === "all") {
-			patterns.push("all");
+		const data = await daemonRequest(ctx.global.session, "blackbox-rm", { patterns: toSend });
+		if (!data) return 1;
+
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
 		} else {
-			patterns.push(args.subcommand);
-			for (const p of args.positionals) {
-				patterns.push(p);
+			if (data.length === 0) {
+				console.log("All blackbox patterns removed");
+			} else {
+				console.log("Blackbox patterns:");
+				for (const p of data) {
+					console.log(`  ${p}`);
+				}
 			}
 		}
-	}
 
-	if (patterns.length === 0) {
-		console.error("No patterns specified");
-		console.error("  -> Try: dbg blackbox-rm node_modules");
-		console.error("  -> Try: dbg blackbox-rm all");
-		return 1;
-	}
-
-	const client = new DaemonClient(session);
-	const response = await client.request("blackbox-rm", { patterns });
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as string[];
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		if (data.length === 0) {
-			console.log("All blackbox patterns removed");
-		} else {
-			console.log("Blackbox patterns:");
-			for (const p of data) {
-				console.log(`  ${p}`);
-			}
-		}
-	}
-
-	return 0;
+		return 0;
+	},
 });

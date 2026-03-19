@@ -1,34 +1,25 @@
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
-import type { StateSnapshot } from "../daemon/session.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
 import { printState } from "./print-state.ts";
 
-registerCommand("pause", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "pause",
+	description: "Interrupt running process",
+	category: "execution",
+	positional: { kind: "none" },
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const data = await daemonRequest(ctx.global.session, "pause");
+		if (!data) return 1;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+		} else {
+			printState(data, { color: shouldEnableColor(ctx.global.color) });
+		}
 
-	const client = new DaemonClient(session);
-	const response = await client.request("pause");
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as StateSnapshot;
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		printState(data, { color: shouldEnableColor(args.global.color) });
-	}
-
-	return 0;
+		return 0;
+	},
 });

@@ -1,74 +1,43 @@
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { shortPath } from "../formatter/path.ts";
 
-registerCommand("search", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "search",
+	description: "Search loaded scripts",
+	category: "inspection",
+	positional: { kind: "joined", name: "query", required: true },
+	flags: z.object({
+		regex: z.boolean().optional().meta({ description: "Treat query as regex" }),
+		"case-sensitive": z.boolean().optional().meta({ description: "Case-sensitive match" }),
+		file: z.string().optional().meta({ description: "Script ID filter" }),
+	}),
+	handler: async (ctx) => {
+		const query = ctx.positional;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
+		const data = await daemonRequest(ctx.global.session, "search", {
+			query,
+			isRegex: ctx.flags.regex || undefined,
+			caseSensitive: ctx.flags["case-sensitive"] || undefined,
+			scriptId: ctx.flags.file,
+		});
+		if (!data) return 1;
 
-	// Query from subcommand + positionals
-	const parts: string[] = [];
-	if (args.subcommand) {
-		parts.push(args.subcommand);
-	}
-	for (const p of args.positionals) {
-		parts.push(p);
-	}
-	const query = parts.join(" ");
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return 0;
+		}
 
-	if (!query) {
-		console.error("No search query specified");
-		console.error("  -> Try: dbg search <query> [--regex] [--case-sensitive]");
-		return 1;
-	}
+		if (data.length === 0) {
+			console.log("No matches found");
+			return 0;
+		}
 
-	const client = new DaemonClient(session);
+		for (const match of data) {
+			console.log(`${shortPath(match.url)}:${match.line}: ${match.content}`);
+		}
 
-	const searchArgs: Record<string, unknown> = { query };
-
-	if (args.flags.regex === true) {
-		searchArgs.isRegex = true;
-	}
-	if (args.flags["case-sensitive"] === true) {
-		searchArgs.caseSensitive = true;
-	}
-	if (typeof args.flags.file === "string") {
-		searchArgs.scriptId = args.flags.file;
-	}
-
-	const response = await client.request("search", searchArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as Array<{
-		url: string;
-		line: number;
-		column: number;
-		content: string;
-	}>;
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
 		return 0;
-	}
-
-	if (data.length === 0) {
-		console.log("No matches found");
-		return 0;
-	}
-
-	for (const match of data) {
-		console.log(`${shortPath(match.url)}:${match.line}: ${match.content}`);
-	}
-
-	return 0;
+	},
 });

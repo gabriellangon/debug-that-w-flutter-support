@@ -1,41 +1,29 @@
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("break-fn", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "break-fn",
+	description: "Break on function by name",
+	usage: "break-fn <function-name>",
+	category: "breakpoints",
+	positional: { kind: "required", name: "name", description: "Function name" },
+	flags: z.object({
+		condition: z.string().optional().meta({ description: "Condition expression" }),
+	}),
+	handler: async (ctx) => {
+		const name = ctx.positional;
+		const condition = ctx.flags.condition;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk --runtime lldb ./program");
-		return 1;
-	}
+		const data = await daemonRequest(ctx.global.session, "break-fn", { name, condition });
+		if (!data) return 1;
 
-	const name = args.subcommand;
-	if (!name) {
-		console.error("Usage: dbg break-fn <function-name>");
-		console.error("  Example: dbg break-fn __assert_rtn");
-		console.error("  Example: dbg break-fn 'yoga::Style::operator=='");
-		return 1;
-	}
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+		} else {
+			console.log(`${data.ref}  fn:${name}`);
+		}
 
-	const condition = typeof args.flags.condition === "string" ? args.flags.condition : undefined;
-
-	const client = new DaemonClient(session);
-	const response = await client.request("break-fn", { name, condition });
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as { ref: string };
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		console.log(`${data.ref}  fn:${name}`);
-	}
-
-	return 0;
+		return 0;
+	},
 });

@@ -1,52 +1,73 @@
-import { inferAttachRuntime } from "../cli/infer-runtime.ts";
-import { parseIntFlag, parseStringArrayFlag } from "../cli/parse-flag.ts";
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { FLUTTER_DAEMON_REQUEST_TIMEOUT_MS } from "../constants.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
+import { detectAttachRuntime } from "../util/detect-runtime.ts";
 
-registerCommand("attach", async (args) => {
-	const session = args.global.session;
-	const target = args.subcommand ?? args.positionals[0];
-	const explicitRuntime = typeof args.flags.runtime === "string" ? args.flags.runtime : undefined;
-	const runtime = explicitRuntime ?? (target ? inferAttachRuntime(target) : undefined);
+defineCommand({
+	name: "attach",
+	description: "Attach to running process",
+	usage: "attach [target]",
 
-	if (!target && runtime !== "flutter") {
-		console.error("No target specified");
-		console.error("  -> Try: dbg attach <ws-url | port>");
-		console.error("  -> For Flutter device discovery: dbg attach --runtime flutter");
-		return 1;
-	}
+	category: "session",
+	positional: { kind: "joined", name: "target", description: "PID, WebSocket URL, or port" },
+	flags: z.object({
+		runtime: z.string().optional().meta({ description: "Runtime override" }),
+		timeout: z.coerce.number().optional().meta({ description: "Daemon startup timeout" }),
+		"tool-arg": z
+			.array(z.string())
+			.optional()
+			.meta({ description: "Repeatable adapter/tool argument" }),
+	}),
+	handler: async (ctx) => {
+		const session = ctx.global.session;
+		const target = ctx.positional || undefined;
+		const runtime =
+			ctx.flags.runtime ?? (target ? detectAttachRuntime(target)?.runtime : undefined);
 
-	// Check if daemon already running (PID-aware — stale sockets won't block)
-	if (DaemonClient.isRunning(session)) {
-		console.error(`Session "${session}" is already active`);
-		console.error(`  -> Try: dbg stop --session ${session}`);
-		return 1;
-	}
+		if (!target && runtime !== "flutter") {
+			console.error("No attach target specified");
+			console.error("  -> Try: dbg attach <ws-url | port>");
+			console.error("  -> For Flutter discovery: dbg attach --runtime flutter");
+			return 1;
+		}
 
-	// Ensure daemon is running — auto-cleans stale sockets if daemon is dead
-	const timeout = parseIntFlag(args.flags, "timeout");
-	const toolArgs = parseStringArrayFlag(args.flags, "tool-arg");
-	await ensureDaemon(session, { timeout });
+		// Check if daemon already running (PID-aware — stale sockets won't block)
+		if (DaemonClient.isRunning(session)) {
+			console.error(`Session "${session}" is already active`);
+			console.error(`  -> Try: dbg stop --session ${session}`);
+			return 1;
+		}
 
-	// Send attach command
-	const client = new DaemonClient(session);
-	const response = await client.request("attach", { target, runtime, toolArgs });
+		// Ensure daemon is running — auto-cleans stale sockets if daemon is dead
+		await ensureDaemon(session, { timeout: ctx.flags.timeout });
 
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
+		// Send attach command
+		const client = new DaemonClient(session);
+		const response = await client.request("attach", {
+			target,
+			runtime,
+			toolArgs: ctx.flags["tool-arg"],
+		}, {
+			timeoutMs: runtime === "flutter" ? FLUTTER_DAEMON_REQUEST_TIMEOUT_MS : undefined,
+		});
 
-	const data = response.data as { wsUrl: string };
+		if (!response.ok) {
+			console.error(`${response.error}`);
+			if (response.suggestion) console.error(`  ${response.suggestion}`);
+			return 1;
+		}
 
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		console.log(`Session "${session}" attached`);
-		console.log(`Connected to ${data.wsUrl}`);
-	}
+		const data = response.data as { wsUrl: string };
 
-	return 0;
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+		} else {
+			console.log(`Session "${session}" attached`);
+			console.log(`Connected to ${data.wsUrl}`);
+		}
+
+		return 0;
+	},
 });

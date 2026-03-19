@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { DebugSession } from "../../../src/daemon/session.ts";
+import type { CdpSession } from "../../../src/cdp/session.ts";
 import { launchPaused } from "../../helpers.ts";
 
 /**
  * Launch console-app.js, continue to debugger, and wait for console events.
  */
-async function launchConsoleApp(name: string): Promise<DebugSession> {
-	const session = await launchPaused(name, "tests/fixtures/console-app.js");
+async function launchConsoleApp(name: string): Promise<CdpSession> {
+	const session = await launchPaused(name, "tests/fixtures/js/console-app.js");
 	await session.continue();
 	await session.waitForState("paused", 5000);
 	// Small delay for console events to arrive over CDP
@@ -14,7 +14,7 @@ async function launchConsoleApp(name: string): Promise<DebugSession> {
 	return session;
 }
 
-async function withConsoleSession(name: string, fn: (session: DebugSession) => Promise<void>) {
+async function withConsoleSession(name: string, fn: (session: CdpSession) => Promise<void>) {
 	const session = await launchConsoleApp(name);
 	try {
 		await fn(session);
@@ -101,8 +101,8 @@ describe("Console capture", () => {
 });
 
 describe("Exception capture", () => {
-	async function withExceptionSession(name: string, fn: (session: DebugSession) => Promise<void>) {
-		const session = await launchPaused(name, "tests/fixtures/exception-app.js");
+	async function withExceptionSession(name: string, fn: (session: CdpSession) => Promise<void>) {
+		const session = await launchPaused(name, "tests/fixtures/js/exception-app.js");
 		try {
 			await session.continue();
 			await session.waitForState("idle", 5000);

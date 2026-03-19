@@ -1,17 +1,19 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
-import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
+import { FLUTTER_INITIAL_STOP_TIMEOUT_MS, INITIALIZED_TIMEOUT_MS } from "../constants.ts";
+import { BaseSession } from "../session/base-session.ts";
+import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
-	ConsoleMessage,
-	ExceptionEntry,
+	AttachOptions,
+	AttachResult,
+	LaunchOptions,
 	LaunchResult,
-	PauseInfo,
 	SessionStatus,
 	StateOptions,
 	StateSnapshot,
-} from "../daemon/session.ts";
-import { RefTable } from "../refs/ref-table.ts";
+} from "../session/types.ts";
+import { getJavaAdapterClasspath, isJavaAdapterInstalled } from "./adapters/index.ts";
 import { DapClient } from "./client.ts";
 
 /** Directory where managed adapter binaries are stored. */
@@ -20,58 +22,187 @@ export function getManagedAdaptersDir(): string {
 	return join(home, ".debug-that", "adapters");
 }
 
-/**
- * Resolves the path to a DAP adapter binary for a given runtime.
- * Checks managed install path first, then known system paths, then PATH.
- */
-function resolveAdapterCommand(runtime: string): string[] {
-	switch (runtime) {
-		case "lldb":
-		case "lldb-dap": {
-			// 1. Check managed install
-			const managedPath = join(getManagedAdaptersDir(), "lldb-dap");
-			if (existsSync(managedPath)) {
-				return [managedPath];
-			}
-			// 2. Check system PATH
-			const whichResult = Bun.spawnSync(["which", "lldb-dap"]);
-			if (whichResult.exitCode === 0) {
-				return ["lldb-dap"];
-			}
-			// 3. Try homebrew LLVM path
-			const brewPath = "/opt/homebrew/opt/llvm/bin/lldb-dap";
-			if (existsSync(brewPath)) {
-				return [brewPath];
-			}
-			// 4. Fallback — will fail at spawn with a clear error
-			return ["lldb-dap"];
-		}
-		case "codelldb":
-			return ["codelldb", "--port", "0"];
-		case "python":
-		case "debugpy": {
-			// debugpy adapter runs as a Python module
-			// Try python3 first, then python
-			const py3 = Bun.spawnSync(["which", "python3"]);
-			const pyBin = py3.exitCode === 0 ? "python3" : "python";
-			return [pyBin, "-m", "debugpy.adapter"];
-		}
-		case "dart":
-			return ["dart", "debug_adapter"];
-		case "flutter":
-			return ["flutter", "debug-adapter"];
-		default:
-			// Assume the runtime string is the adapter binary name or path
-			return [runtime];
-	}
+// ── Runtime-specific configuration ───────────────────────────────
+
+interface DapRuntimeConfig {
+	resolveCommand(mode?: "launch" | "attach"): string[];
+	buildLaunchArgs(
+		program: string,
+		programArgs: string[],
+		cwd: string,
+		options: LaunchOptions,
+	): Record<string, unknown>;
+	parseAttachTarget?(
+		target: string | undefined,
+		cwd: string,
+		options: AttachOptions,
+	): Record<string, unknown>;
 }
 
-function isPythonRuntime(runtime: string): boolean {
-	return runtime === "python" || runtime === "debugpy";
-}
+const DEFAULT_LAUNCH: DapRuntimeConfig["buildLaunchArgs"] = (
+	program,
+	programArgs,
+	cwd,
+	options,
+) => ({
+	program,
+	args: programArgs,
+	cwd,
+	stopOnEntry: options.brk ?? true,
+});
 
-function isPythonBinary(binary: string | undefined): boolean {
-	return binary !== undefined && /^python(?:\d+(?:\.\d+)*)?$/.test(binary);
+const lldbConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		const managedPath = join(getManagedAdaptersDir(), "lldb-dap");
+		if (existsSync(managedPath)) return [managedPath];
+		if (Bun.which("lldb-dap")) return ["lldb-dap"];
+		const brewPath = "/opt/homebrew/opt/llvm/bin/lldb-dap";
+		if (existsSync(brewPath)) return [brewPath];
+		return ["lldb-dap"];
+	},
+	buildLaunchArgs: DEFAULT_LAUNCH,
+};
+
+const debugpyConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		const pyBin = Bun.which("python3") ? "python3" : "python";
+		return [pyBin, "-m", "debugpy.adapter"];
+	},
+	buildLaunchArgs: (program, programArgs, cwd, options) => ({
+		program,
+		args: programArgs,
+		cwd,
+		stopOnEntry: options.brk ?? true,
+		console: "internalConsole",
+		justMyCode: false,
+	}),
+};
+
+const javaConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		if (!isJavaAdapterInstalled()) {
+			throw new Error("Java debug adapter not installed. Run `dbg install java` first.");
+		}
+		const cp = getJavaAdapterClasspath();
+		return ["java", "-cp", cp, "com.debugthat.adapter.Main"];
+	},
+	buildLaunchArgs(program, programArgs, _cwd, _options) {
+		const basename = program.split("/").pop() ?? program;
+		const mainClass = basename.replace(/\.(java|class)$/, "");
+		// classPaths must point to where .class files live (typically same dir as .java)
+		const programDir = program.includes("/")
+			? program.substring(0, program.lastIndexOf("/"))
+			: _cwd;
+		return {
+			mainClass,
+			classPaths: [programDir],
+			cwd: programDir,
+			sourcePaths: [programDir],
+			stopOnEntry: true,
+			...(programArgs.length > 0 ? { args: programArgs.join(" ") } : {}),
+		};
+	},
+	parseAttachTarget(target) {
+		if (!target) {
+			throw new Error("Attach for java requires a host:port target.");
+		}
+		const colonIdx = target.lastIndexOf(":");
+		if (colonIdx > 0) {
+			return {
+				hostName: target.substring(0, colonIdx),
+				port: parseInt(target.substring(colonIdx + 1), 10),
+			};
+		}
+		const port = parseInt(target, 10);
+		return { hostName: "localhost", port: Number.isNaN(port) ? 5005 : port };
+	},
+};
+
+const dartConfig: DapRuntimeConfig = {
+	resolveCommand() {
+		return ["dart", "debug_adapter"];
+	},
+	buildLaunchArgs(program, programArgs, cwd, options) {
+		const toolArgs = [...(options.toolArgs ?? [])];
+		if (options.brk !== false) {
+			toolArgs.push("--pause-isolates-on-start");
+		}
+		return {
+			program,
+			args: programArgs,
+			cwd,
+			...(toolArgs.length > 0 ? { toolArgs } : {}),
+		};
+	},
+	parseAttachTarget(target, cwd) {
+		if (!target || !isVmServiceTarget(target)) {
+			throw new Error(
+				"Attach for dart requires a VM Service URL (for example ws://127.0.0.1:12345/abc=/ws).",
+			);
+		}
+		return { vmServiceUri: target, cwd };
+	},
+};
+
+const flutterConfig: DapRuntimeConfig = {
+	resolveCommand(mode) {
+		const base = ["flutter", "debug-adapter"];
+		return mode === "attach" ? [...base, "--no-dds"] : base;
+	},
+	buildLaunchArgs(program, programArgs, cwd, options) {
+		const toolArgs: string[] = [];
+		if (options.device) {
+			toolArgs.push("-d", options.device);
+		}
+		toolArgs.push(...(options.toolArgs ?? []));
+		return {
+			program,
+			args: programArgs,
+			cwd,
+			...(toolArgs.length > 0 ? { toolArgs } : {}),
+		};
+	},
+	parseAttachTarget(target, cwd, options) {
+		if (!target) {
+			return {
+				cwd,
+				...(options.toolArgs && options.toolArgs.length > 0 ? { toolArgs: options.toolArgs } : {}),
+			};
+		}
+		if (!isVmServiceTarget(target)) {
+			throw new Error(
+				"Attach for flutter requires a VM Service URL, or omit the target to let Flutter discover a running app.",
+			);
+		}
+		return {
+			vmServiceUri: target,
+			cwd,
+			...(options.toolArgs && options.toolArgs.length > 0 ? { toolArgs: options.toolArgs } : {}),
+		};
+	},
+};
+
+const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
+	lldb: lldbConfig,
+	"lldb-dap": lldbConfig,
+	codelldb: {
+		resolveCommand: () => ["codelldb", "--port", "0"],
+		buildLaunchArgs: DEFAULT_LAUNCH,
+	},
+	python: debugpyConfig,
+	debugpy: debugpyConfig,
+	java: javaConfig,
+	dart: dartConfig,
+	flutter: flutterConfig,
+};
+
+function getRuntimeConfig(runtime: string): DapRuntimeConfig {
+	return (
+		RUNTIME_CONFIGS[runtime] ?? {
+			resolveCommand: () => [runtime],
+			buildLaunchArgs: DEFAULT_LAUNCH,
+		}
+	);
 }
 
 function isDartRuntime(runtime: string): boolean {
@@ -84,25 +215,6 @@ function isFlutterRuntime(runtime: string): boolean {
 
 function isVmServiceTarget(target: string): boolean {
 	return /^https?:\/\//.test(target) || /^wss?:\/\//.test(target);
-}
-
-function normalizeRuntimeCommand(runtime: string, command: string[]): string[] {
-	if (command.length === 0) {
-		return command;
-	}
-
-	const binary = command[0]?.split("/").pop();
-	if (isPythonRuntime(runtime) && isPythonBinary(binary)) {
-		return command.slice(1);
-	}
-	if (isDartRuntime(runtime) && binary === "dart") {
-		return command.slice(1);
-	}
-	if (isFlutterRuntime(runtime) && binary === "flutter") {
-		return command.slice(1);
-	}
-
-	return command;
 }
 
 interface DapBreakpointEntry {
@@ -137,32 +249,19 @@ interface DapThreadInfo {
 	name?: string;
 }
 
-interface MdnsVmServiceCandidate {
-	instanceName: string;
-	resolvedHost?: string;
-	port: number;
-	authCode: string;
-}
-
 /**
- * DapSession implements the same public interface as DebugSession, but communicates
+ * DapSession implements the same public interface as CdpSession, but communicates
  * with a DAP debug adapter (e.g. lldb-dap) instead of CDP/V8. This allows debug-that
  * to debug native code (C/C++/Rust via LLDB), Python, Ruby, etc.
  */
-export class DapSession {
+export class DapSession extends BaseSession {
 	private dap: DapClient | null = null;
-	private refs: RefTable = new RefTable();
-	private _state: "idle" | "running" | "paused" = "idle";
-	private _pauseInfo: PauseInfo | null = null;
-	private _session: string;
 	private _runtime: string;
-	private _startTime: number = Date.now();
-	private _threadId: number | null = null;
+	private _isAttached = false; // true if session was created via attach (not launch)
+	private _threadId: number | null = 1;
 	private _threads: DapThreadInfo[] = [];
 	private _stackFrames: DapStackFrame[] = [];
-	private _consoleMessages: ConsoleMessage[] = [];
-	private _exceptionEntries: ExceptionEntry[] = [];
-	private capabilities: DebugProtocol.Capabilities = {};
+	private adapterCapabilities: DebugProtocol.Capabilities = {};
 	private initialized = false;
 
 	// Breakpoints: DAP requires sending ALL breakpoints per file at once
@@ -170,79 +269,82 @@ export class DapSession {
 	private allBreakpoints: DapBreakpointEntry[] = [];
 	private functionBreakpoints: DapFunctionBreakpointEntry[] = [];
 
+	// Stored config (applied on launch/restart, and immediately if connected+paused)
+	private _remaps: [string, string][] = [];
+	private _symbolPaths: string[] = [];
+
 	// Promise that resolves when the adapter stops (for step/continue/pause)
 	private stoppedWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
 	// Deduplicates concurrent fetchStackTrace calls
 	private _stackFetchPromise: Promise<void> | null = null;
 
+	readonly capabilities: SessionCapabilities = {
+		functionBreakpoints: true,
+		logpoints: false,
+		hotpatch: false,
+		blackboxing: false,
+		modules: true,
+		restartFrame: false,
+		scriptSearch: false,
+		sourceMapResolution: false,
+		breakableLocations: false,
+		setReturnValue: false,
+		pathMapping: true,
+		symbolLoading: true,
+		breakpointToggle: false,
+		restart: false,
+	};
+
 	constructor(session: string, runtime: string) {
-		this._session = session;
+		super(session);
 		this._runtime = runtime;
+	}
+
+	override applyPendingConfig(config: PendingConfig): void {
+		if (config.remaps) {
+			this._remaps = [...config.remaps];
+		}
+		if (config.symbolPaths) {
+			this._symbolPaths = [...config.symbolPaths];
+		}
 	}
 
 	// ── Lifecycle ─────────────────────────────────────────────────────
 
-	async launch(
-		command: string[],
-		options: {
-			brk?: boolean;
-			port?: number;
-			program?: string;
-			args?: string[];
-			device?: string;
-			toolArgs?: string[];
-		} = {},
-	): Promise<LaunchResult> {
-		if (this._state !== "idle") {
+	async launch(command: string[], options: LaunchOptions = {}): Promise<LaunchResult> {
+		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
 
-		const adapterCmd = resolveAdapterCommand(this._runtime);
+		const config = getRuntimeConfig(this._runtime);
+		const adapterCmd = config.resolveCommand("launch");
 		this.dap = DapClient.spawn(adapterCmd);
+		this.initialized = false;
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
-		// Build launch arguments. The exact schema depends on the adapter.
-		const normalizedCommand = normalizeRuntimeCommand(this._runtime, command);
-		const program = options.program ?? normalizedCommand[0];
-		const programArgs = options.args ?? normalizedCommand.slice(1);
-		if (!program) {
-			throw new Error("No program specified for DAP launch.");
-		}
-		const launchArgs: Record<string, unknown> = {
+		const program = options.program ?? command[0] ?? "";
+		const programArgs = options.args ?? command.slice(1);
+		const launchArgs: Record<string, unknown> = config.buildLaunchArgs(
 			program,
-			args: programArgs,
-			cwd: process.cwd(),
-		};
+			programArgs,
+			process.cwd(),
+			options,
+		);
+		const flutterEntryBreakpoint =
+			isFlutterRuntime(this._runtime) && options.brk !== false
+				? this.resolveDartEntryBreakpoint(program, process.cwd())
+				: null;
 
-		// Runtime-specific launch arguments
-		if (isPythonRuntime(this._runtime)) {
-			launchArgs.stopOnEntry = options.brk ?? true;
-			launchArgs.console = "internalConsole";
-			launchArgs.justMyCode = false;
-		} else if (isDartRuntime(this._runtime)) {
-			const toolArgs = [...(options.toolArgs ?? [])];
-			if (options.brk !== false) {
-				toolArgs.push("--pause-isolates-on-start");
-			}
-			if (toolArgs.length > 0) {
-				launchArgs.toolArgs = toolArgs;
-			}
-		} else if (isFlutterRuntime(this._runtime)) {
-			const toolArgs: string[] = [];
-			if (options.device) {
-				toolArgs.push("-d", options.device);
-			}
-			toolArgs.push(...(options.toolArgs ?? []));
-			if (options.brk !== false) {
-				toolArgs.push("--start-paused");
-			}
-			if (toolArgs.length > 0) {
-				launchArgs.toolArgs = toolArgs;
-			}
-		} else {
-			launchArgs.stopOnEntry = options.brk ?? true;
+		// Apply stored source-map remappings
+		if (this._remaps.length > 0) {
+			launchArgs.sourceMap = this._remaps.map(([from, to]) => [from, to]);
+		}
+
+		// Apply stored symbol paths as pre-run commands
+		if (this._symbolPaths.length > 0) {
+			launchArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
 		}
 
 		// DAP spec: some adapters (e.g. debugpy) defer the launch response until
@@ -250,18 +352,34 @@ export class DapSession {
 		// "initialized" event, then send configurationDone, then await launch.
 		const launchPromise = this.dap.send("launch", launchArgs);
 		await this.waitForInitialized();
+		if (flutterEntryBreakpoint) {
+			await this.setTemporaryBreakpoint(flutterEntryBreakpoint.file, flutterEntryBreakpoint.line);
+		}
 		await this.dap.send("configurationDone");
 		await launchPromise;
 		await this.refreshThreads();
-		await this.waitForThreads(10_000);
+		await this.waitForThreads(2_000);
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
-			await this.waitForStop(5_000);
-		}
-
-		if (this._state === "idle") {
-			this._state = "running";
+			const stopTimeout = isFlutterRuntime(this._runtime) ? FLUTTER_INITIAL_STOP_TIMEOUT_MS : 5_000;
+			if (flutterEntryBreakpoint) {
+				await this.waitForPauseMatch(stopTimeout, (pauseInfo) => pauseInfo?.reason === "breakpoint");
+				await this.clearTemporaryBreakpoint(flutterEntryBreakpoint.file).catch(() => {});
+			} else {
+				await this.waitForStop(stopTimeout);
+			}
+			if (!this.isPaused()) {
+				const errors = this.consoleMessages
+					.filter((m) => m.level === "error")
+					.map((m) => m.text)
+					.join("\n");
+				const detail = errors || this.dap?.stderr?.trim();
+				const msg = detail
+					? `Target exited without stopping:\n${detail}`
+					: "Target exited without stopping (stopOnEntry had no effect)";
+				throw new Error(msg);
+			}
 		}
 
 		const result: LaunchResult = {
@@ -270,44 +388,44 @@ export class DapSession {
 			paused: this.isPaused(),
 		};
 
-		if (this._pauseInfo) {
-			result.pauseInfo = this._pauseInfo;
+		if (this.pauseInfo) {
+			result.pauseInfo = this.pauseInfo;
 		}
 
 		return result;
 	}
 
-	async attach(
-		target?: string,
-		options: {
-			program?: string;
-			toolArgs?: string[];
-		} = {},
-	): Promise<{ wsUrl: string }> {
-		if (this._state !== "idle") {
+	async attach(target?: string, options: AttachOptions = {}): Promise<AttachResult> {
+		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
+		this._isAttached = true;
 
-		if (isFlutterRuntime(this._runtime) && !target) {
-			target = await this.discoverFlutterVmServiceUrl(options.toolArgs);
-		}
-
-		const adapterCmd = isFlutterRuntime(this._runtime)
-			? [...resolveAdapterCommand(this._runtime), "--no-dds"]
-			: resolveAdapterCommand(this._runtime);
+		const config = getRuntimeConfig(this._runtime);
+		const adapterCmd = config.resolveCommand("attach");
 		this.dap = DapClient.spawn(adapterCmd);
+		this.initialized = false;
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
-		const attachArgs = this.buildAttachArgs(target, options);
+		let attachArgs: Record<string, unknown>;
+		if (config.parseAttachTarget) {
+			attachArgs = config.parseAttachTarget(target, process.cwd(), options);
+		} else {
+			if (!target) {
+				throw new Error("Attach requires a PID, port, process name, or WebSocket URL.");
+			}
+			const pid = parseInt(target, 10);
+			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
+		}
 
 		const attachPromise = this.dap.send("attach", attachArgs);
 		await this.waitForInitialized();
 		await this.dap.send("configurationDone");
 		await attachPromise;
 		await this.refreshThreads();
-		await this.waitForThreads(10_000);
+		await this.waitForThreads(2_000);
 
 		// Wait briefly for initial stop
 		await this.waitForStop(5_000).catch(() => {
@@ -315,79 +433,21 @@ export class DapSession {
 		});
 
 		// If we're not paused after waiting, the target is running
-		if (this._state === "idle") {
-			this._state = "running";
+		if (this.state === "idle") {
+			this.state = "running";
 		}
 
 		return { wsUrl: target ? `dap://${this._runtime}/${target}` : `dap://${this._runtime}` };
 	}
 
-	private buildAttachArgs(
-		target?: string,
-		options: {
-			program?: string;
-			toolArgs?: string[];
-		} = {},
-	): Record<string, unknown> {
-		if (isFlutterRuntime(this._runtime) && !target) {
-			const attachArgs: Record<string, unknown> = {
-				cwd: process.cwd(),
-			};
-			if (options.toolArgs && options.toolArgs.length > 0) {
-				attachArgs.toolArgs = options.toolArgs;
-			}
-			if (options.program) {
-				attachArgs.program = options.program;
-			}
-			return attachArgs;
-		}
-
-		if (isDartRuntime(this._runtime) || isFlutterRuntime(this._runtime)) {
-			if (!target) {
-				throw new Error(
-					`Attach for ${this._runtime} requires a VM Service URL (for example ws://127.0.0.1:12345/abc=/ws).`,
-				);
-			}
-
-			if (!isVmServiceTarget(target)) {
-				const message = isFlutterRuntime(this._runtime)
-					? `Attach for ${this._runtime} requires a VM Service URL, or omit the target to let Flutter discover a running app.`
-					: `Attach for ${this._runtime} requires a VM Service URL (for example ws://127.0.0.1:12345/abc=/ws).`;
-				throw new Error(message);
-			}
-
-			const attachArgs: Record<string, unknown> = {
-				vmServiceUri: target,
-				cwd: process.cwd(),
-			};
-			if (isFlutterRuntime(this._runtime)) {
-				if (options.toolArgs && options.toolArgs.length > 0) {
-					attachArgs.toolArgs = options.toolArgs;
-				}
-				if (options.program) {
-					attachArgs.program = options.program;
-				}
-			}
-			return attachArgs;
-		}
-
-		if (!target) {
-			throw new Error("No attach target specified for this runtime.");
-		}
-
-		// Parse target: could be a PID or a process name
-		const pid = parseInt(target, 10);
-		return Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
-	}
-
 	getStatus(): SessionStatus {
 		return {
-			session: this._session,
-			state: this._state,
+			session: this.session,
+			state: this.state,
 			pid: this.dap?.pid,
 			wsUrl: this.dap ? `dap://${this._runtime}` : undefined,
-			pauseInfo: this._pauseInfo ?? undefined,
-			uptime: Math.floor((Date.now() - this._startTime) / 1000),
+			pauseInfo: this.pauseInfo ?? undefined,
+			uptime: Math.floor((Date.now() - this.startTime) / 1000),
 			scriptCount: 0,
 		};
 	}
@@ -395,7 +455,8 @@ export class DapSession {
 	async stop(): Promise<void> {
 		if (this.dap) {
 			try {
-				await this.dap.send("disconnect", { terminateDebuggee: true });
+				// For attached sessions, don't terminate the debuggee
+				await this.dap.send("disconnect", { terminateDebuggee: !this._isAttached });
 			} catch {
 				// Adapter may already be dead
 			}
@@ -403,17 +464,15 @@ export class DapSession {
 			this.dap = null;
 		}
 
-		this._state = "idle";
-		this._pauseInfo = null;
+		this.resetState();
 		this._stackFrames = [];
+		this._isAttached = false;
 		this._threadId = null;
 		this._threads = [];
-		this.refs.clearAll();
+		this.initialized = false;
 		this.breakpoints.clear();
 		this.allBreakpoints = [];
 		this.functionBreakpoints = [];
-		this._consoleMessages = [];
-		this._exceptionEntries = [];
 	}
 
 	// ── Execution control ─────────────────────────────────────────────
@@ -422,21 +481,24 @@ export class DapSession {
 		this.requireConnected();
 		this.requirePaused();
 
-		this._state = "running";
-		this._pauseInfo = null;
+		this.state = "running";
+		this.pauseInfo = null;
 		this._stackFrames = [];
 		this.refs.clearVolatile();
 
+		const waiter = this.createStoppedWaiter(30_000);
 		const threadId = await this.getPreferredThreadId();
 		await this.getDap().send("continue", { threadId });
+		await waiter;
+		if (this.isPaused()) await this.fetchStackTrace();
 	}
 
 	async step(mode: "over" | "into" | "out"): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
-		this._state = "running";
-		this._pauseInfo = null;
+		this.state = "running";
+		this.pauseInfo = null;
 		this.refs.clearVolatile();
 
 		const waiter = this.createStoppedWaiter(30_000);
@@ -449,7 +511,7 @@ export class DapSession {
 
 	async pause(): Promise<void> {
 		this.requireConnected();
-		if (this._state !== "running") {
+		if (this.state !== "running") {
 			throw new Error("Cannot pause: target is not running");
 		}
 
@@ -489,7 +551,7 @@ export class DapSession {
 
 		// Register ref
 		const ref = this.refs.addBreakpoint(`dap-bp:${file}:${line}`, {
-			file,
+			url: file,
 			line,
 		});
 		entry.ref = ref;
@@ -558,7 +620,8 @@ export class DapSession {
 		await this.getDap().send("setFunctionBreakpoints", { breakpoints: [] });
 	}
 
-	listBreakpoints(): Array<{
+	/** DAP breakpoints are always bound — the pending filter is ignored. */
+	listBreakpoints(_options?: { pending?: boolean }): Array<{
 		ref: string;
 		type: "BP" | "LP";
 		url: string;
@@ -603,7 +666,7 @@ export class DapSession {
 		this.functionBreakpoints.push(entry);
 
 		const ref = this.refs.addBreakpoint(`dap-fn:${name}`, {
-			file: name,
+			url: name,
 			line: 0,
 		});
 		entry.ref = ref;
@@ -830,7 +893,7 @@ export class DapSession {
 		lines: Array<{ line: number; text: string; current?: boolean }>;
 	}> {
 		// For native debuggers, read source from the filesystem
-		const file = options.file ?? this._pauseInfo?.url;
+		const file = options.file ?? this.pauseInfo?.url;
 		if (!file) {
 			throw new Error("No source file available. Specify a file path.");
 		}
@@ -843,7 +906,7 @@ export class DapSession {
 		}
 
 		const allLines = content.split("\n");
-		const currentLine = this._pauseInfo?.line;
+		const currentLine = this.pauseInfo?.line;
 		const windowSize = options.lines ?? 10;
 
 		let startLine: number;
@@ -879,22 +942,22 @@ export class DapSession {
 		if (this.isPaused()) await this.ensureStack();
 
 		const snapshot: StateSnapshot = {
-			status: this._state,
+			status: this.state,
 		};
 
-		if (this._state === "paused" && this._pauseInfo) {
-			snapshot.reason = this._pauseInfo.reason;
-			if (this._pauseInfo.url && this._pauseInfo.line !== undefined) {
+		if (this.state === "paused" && this.pauseInfo) {
+			snapshot.reason = this.pauseInfo.reason;
+			if (this.pauseInfo.url && this.pauseInfo.line !== undefined) {
 				snapshot.location = {
-					url: this._pauseInfo.url,
-					line: this._pauseInfo.line,
-					column: this._pauseInfo.column,
+					url: this.pauseInfo.url,
+					line: this.pauseInfo.line,
+					column: this.pauseInfo.column,
 				};
 			}
 		}
 
 		// Include source code if paused and code not explicitly disabled
-		if (this._state === "paused" && options.code !== false) {
+		if (this.state === "paused" && options.code !== false) {
 			try {
 				const source = await this.getSource({ lines: options.lines });
 				snapshot.source = source;
@@ -904,7 +967,7 @@ export class DapSession {
 		}
 
 		// Include variables if requested or if not compact
-		if (this._state === "paused" && (options.vars !== false || !options.compact)) {
+		if (this.state === "paused" && (options.vars !== false || !options.compact)) {
 			try {
 				const vars = await this.getVars({ frame: options.frame, allScopes: options.allScopes });
 				snapshot.vars = vars.map((v) => ({
@@ -919,7 +982,7 @@ export class DapSession {
 		}
 
 		// Include stack if requested
-		if (this._state === "paused" && options.stack !== false) {
+		if (this.state === "paused" && options.stack !== false) {
 			try {
 				snapshot.stack = this.getStack();
 			} catch {
@@ -934,33 +997,6 @@ export class DapSession {
 		return snapshot;
 	}
 
-	// Console & exceptions
-	getConsoleMessages(
-		options: { level?: string; since?: number; clear?: boolean } = {},
-	): ConsoleMessage[] {
-		let msgs = this._consoleMessages;
-		if (options.level) {
-			msgs = msgs.filter((m) => m.level === options.level);
-		}
-		if (options.since !== undefined) {
-			const since = options.since;
-			msgs = msgs.filter((m) => m.timestamp >= since);
-		}
-		if (options.clear) {
-			this._consoleMessages = [];
-		}
-		return msgs;
-	}
-
-	getExceptions(options: { since?: number } = {}): ExceptionEntry[] {
-		let entries = this._exceptionEntries;
-		if (options.since !== undefined) {
-			const since = options.since;
-			entries = entries.filter((e) => e.timestamp >= since);
-		}
-		return entries;
-	}
-
 	// ── Unsupported methods (throw descriptive errors) ────────────────
 
 	async setLogpoint(
@@ -968,7 +1004,7 @@ export class DapSession {
 		_line: number,
 		_template: string,
 		_options?: { condition?: string; maxEmissions?: number },
-	): Promise<never> {
+	): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
 		throw new Error(
 			"Logpoints are not supported in DAP mode. Use breakpoints with conditions instead.",
 		);
@@ -978,7 +1014,7 @@ export class DapSession {
 		this.requireConnected();
 		// DAP supports exception breakpoints through setExceptionBreakpoints.
 		// Use the adapter's declared exception breakpoint filters if available.
-		const available = this.capabilities.exceptionBreakpointFilters ?? [];
+		const available = this.adapterCapabilities.exceptionBreakpointFilters ?? [];
 		const filterIds = available.map((f) => f.filter);
 		let filters: string[];
 		if (mode === "none") {
@@ -993,21 +1029,32 @@ export class DapSession {
 		await this.getDap().send("setExceptionBreakpoints", { filters });
 	}
 
-	async toggleBreakpoint(_ref: string): Promise<never> {
+	async toggleBreakpoint(_ref: string): Promise<{ ref: string; state: "enabled" | "disabled" }> {
 		throw new Error(
 			"Breakpoint toggling is not yet supported in DAP mode. Use break-rm and break.",
 		);
 	}
 
-	async getBreakableLocations(_file: string, _startLine: number, _endLine: number): Promise<never> {
+	async getBreakableLocations(
+		_file: string,
+		_startLine: number,
+		_endLine: number,
+	): Promise<Array<{ line: number; column: number }>> {
 		throw new Error("Breakable locations are not supported in DAP mode.");
 	}
 
-	async hotpatch(_file: string, _source: string, _options?: { dryRun?: boolean }): Promise<never> {
+	async hotpatch(
+		_file: string,
+		_source: string,
+		_options?: { dryRun?: boolean },
+	): Promise<{ status: string; callFrames?: unknown[]; exceptionDetails?: unknown }> {
 		throw new Error("Hot-patching is not supported in DAP mode.");
 	}
 
-	async searchInScripts(_query: string, _options?: Record<string, unknown>): Promise<never> {
+	async searchInScripts(
+		_query: string,
+		_options?: { scriptId?: string; isRegex?: boolean; caseSensitive?: boolean },
+	): Promise<Array<{ url: string; line: number; column: number; content: string }>> {
 		throw new Error(
 			"Script search is not supported in DAP mode. Use your shell to search source files.",
 		);
@@ -1046,12 +1093,78 @@ export class DapSession {
 		throw new Error(`Variable "${varName}" not found in any scope`);
 	}
 
-	async setReturnValue(_value: string): Promise<never> {
+	async setReturnValue(_value: string): Promise<{ value: string; type: string }> {
 		throw new Error("Setting return values is not supported in DAP mode.");
 	}
 
-	async restartFrame(_frameRef?: string): Promise<never> {
+	async restartFrame(_frameRef?: string): Promise<{ status: string }> {
 		throw new Error("Frame restart is not supported in DAP mode.");
+	}
+
+	// ── Path remapping & symbol loading (LLDB commands via DAP evaluate) ──
+
+	/**
+	 * Execute a debugger command via DAP evaluate (repl context).
+	 * Unlike eval(), does not create refs — output is informational text.
+	 */
+	private async execReplCommand(command: string): Promise<string> {
+		this.requireConnected();
+		this.requirePaused();
+		await this.ensureStack();
+
+		const frameId = this.resolveFrameId();
+		const response = await this.getDap().send("evaluate", {
+			expression: command,
+			frameId,
+			context: "repl",
+		});
+
+		const body = response.body as { result: string; variablesReference: number };
+		return body.result;
+	}
+
+	setRemaps(remaps: [string, string][]): void {
+		this._remaps = [...remaps];
+	}
+
+	setSymbolPaths(paths: string[]): void {
+		this._symbolPaths = [...paths];
+	}
+
+	private canExecReplCommand(): boolean {
+		return this.dap !== null && this.state === "paused";
+	}
+
+	async addRemap(from: string, to: string): Promise<string> {
+		this._remaps.push([from, to]);
+		if (this.canExecReplCommand()) {
+			return this.execReplCommand(`settings append target.source-map "${from}" "${to}"`);
+		}
+		return `Stored remap "${from}" -> "${to}" (will apply on next launch)`;
+	}
+
+	async listRemaps(): Promise<string> {
+		if (this.canExecReplCommand()) {
+			return this.execReplCommand("settings show target.source-map");
+		}
+		if (this._remaps.length === 0) return "No path remappings configured";
+		return this._remaps.map(([from, to]) => `"${from}" -> "${to}"`).join("\n");
+	}
+
+	async clearRemaps(): Promise<void> {
+		this._remaps = [];
+		if (this.canExecReplCommand()) {
+			await this.execReplCommand("settings clear target.source-map");
+		}
+	}
+
+	async addSymbols(path: string): Promise<string> {
+		this._symbolPaths.push(path);
+		if (this.canExecReplCommand()) {
+			const result = await this.execReplCommand(`add-dsym ${path}`);
+			return result || "Symbols loaded (restart recommended for full effect)";
+		}
+		return `Stored symbol path "${path}" (will apply on next launch)`;
 	}
 
 	async runTo(file: string, line: number): Promise<void> {
@@ -1084,7 +1197,7 @@ export class DapSession {
 	): Promise<Array<{ id: string; name: string; path?: string; symbolStatus?: string }>> {
 		this.requireConnected();
 
-		if (!this.capabilities.supportsModulesRequest) {
+		if (!this.adapterCapabilities.supportsModulesRequest) {
 			throw new Error(
 				"This debug adapter does not support the modules request.\n  -> The adapter may not report module/symbol information.",
 			);
@@ -1122,7 +1235,7 @@ export class DapSession {
 		}));
 	}
 
-	async addBlackbox(_patterns: string[]): Promise<never> {
+	async addBlackbox(_patterns: string[]): Promise<string[]> {
 		throw new Error("Blackboxing is not supported in DAP mode.");
 	}
 
@@ -1130,34 +1243,23 @@ export class DapSession {
 		return [];
 	}
 
-	async removeBlackbox(_patterns: string[]): Promise<never> {
+	async removeBlackbox(_patterns: string[]): Promise<string[]> {
 		throw new Error("Blackboxing is not supported in DAP mode.");
 	}
 
-	async restart(): Promise<never> {
+	async restart(): Promise<LaunchResult> {
 		throw new Error("Restart is not yet supported in DAP mode. Use stop + launch.");
 	}
 
-	// Expose a no-op sourceMapResolver-like object so entry.ts doesn't crash
-	get sourceMapResolver(): {
-		findScriptForSource: (_: string) => null;
-		getInfo: (_: string) => null;
-		getAllInfos: () => [];
-		setDisabled: (_: boolean) => void;
-	} {
-		return {
-			findScriptForSource: () => null,
-			getInfo: () => null,
-			getAllInfos: () => [],
-			setDisabled: () => {},
-		};
+	getSourceMapInfos(): SourceMapInfo[] {
+		return []; // DAP adapters handle source maps internally
+	}
+
+	disableSourceMaps(): void {
+		// No-op for DAP — adapters handle source maps internally
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────
-
-	private isPaused(): boolean {
-		return this._state === "paused";
-	}
 
 	/** Ensure stack frames are loaded if we're paused. */
 	private async ensureStack(): Promise<void> {
@@ -1195,7 +1297,7 @@ export class DapSession {
 			supportsVariableType: true,
 		});
 
-		this.capabilities = (response.body ?? {}) as DebugProtocol.Capabilities;
+		this.adapterCapabilities = (response.body ?? {}) as DebugProtocol.Capabilities;
 	}
 
 	private setupEventHandlers(): void {
@@ -1228,8 +1330,8 @@ export class DapSession {
 			};
 
 			if (event.reason === "exit") {
-				this._state = "idle";
-				this._pauseInfo = null;
+				this.state = "idle";
+				this.pauseInfo = null;
 				this._stackFrames = [];
 				this._threadId = null;
 				this._threads = [];
@@ -1241,12 +1343,12 @@ export class DapSession {
 				return;
 			}
 
-			this._state = "paused";
+			this.state = "paused";
 			if (event.threadId !== undefined) {
 				this._threadId = event.threadId;
 			}
 
-			this._pauseInfo = {
+			this.pauseInfo = {
 				reason: event.reason,
 			};
 
@@ -1261,27 +1363,28 @@ export class DapSession {
 		});
 
 		dap.on("continued", (_body: unknown) => {
-			this._state = "running";
-			this._pauseInfo = null;
+			this.state = "running";
+			this.pauseInfo = null;
 			this._stackFrames = [];
 			this.refs.clearVolatile();
 		});
 
 		dap.on("terminated", (_body: unknown) => {
-			this._state = "idle";
-			this._pauseInfo = null;
+			this.state = "idle";
+			this.pauseInfo = null;
 			this._stackFrames = [];
 			this._threadId = null;
 			this._threads = [];
 
-			// Resolve any waiting promise
+			// Resolve any waiting promise — the caller checks isPaused() to
+			// distinguish normal completion from unexpected termination.
 			this.stoppedWaiter?.resolve();
 			this.stoppedWaiter = null;
 		});
 
 		dap.on("exited", (_body: unknown) => {
-			this._state = "idle";
-			this._pauseInfo = null;
+			this.state = "idle";
+			this.pauseInfo = null;
 			this._threadId = null;
 			this._threads = [];
 
@@ -1299,7 +1402,7 @@ export class DapSession {
 
 			const category = event.category ?? "console";
 			if (category === "stdout" || category === "console") {
-				this._consoleMessages.push({
+				this.pushConsoleMessage({
 					timestamp: Date.now(),
 					level: "log",
 					text: event.output.trimEnd(),
@@ -1307,17 +1410,13 @@ export class DapSession {
 					line: event.line,
 				});
 			} else if (category === "stderr") {
-				this._consoleMessages.push({
+				this.pushConsoleMessage({
 					timestamp: Date.now(),
 					level: "error",
 					text: event.output.trimEnd(),
 					url: event.source?.path,
 					line: event.line,
 				});
-			}
-
-			if (this._consoleMessages.length > 1000) {
-				this._consoleMessages.shift();
 			}
 		});
 	}
@@ -1337,7 +1436,7 @@ export class DapSession {
 	}
 
 	private async _fetchStackTraceImpl(): Promise<void> {
-		if (!this.dap || this._state !== "paused") return;
+		if (!this.dap || this.state !== "paused") return;
 
 		const threadIds = await this.getThreadCandidates();
 		if (threadIds.length === 0) {
@@ -1346,8 +1445,7 @@ export class DapSession {
 
 		for (const threadId of threadIds) {
 			try {
-				// The Dart/Flutter adapter can sometimes provide the top frame via
-				// pauseEvent.topFrame even when a larger stack request is empty.
+				// Dart/Flutter adapters sometimes expose only the top frame on the first request.
 				const topFrameOnly = await this.requestStackFrames(threadId, 1);
 				const fullStack =
 					topFrameOnly.length > 0 ? await this.requestStackFrames(threadId, 50) : [];
@@ -1365,11 +1463,11 @@ export class DapSession {
 
 				// Update pauseInfo with top-of-stack location
 				const topFrame = this._stackFrames[0];
-				if (topFrame && this._pauseInfo) {
-					this._pauseInfo.url = topFrame.file;
-					this._pauseInfo.line = topFrame.line;
-					this._pauseInfo.column = topFrame.column > 0 ? topFrame.column : undefined;
-					this._pauseInfo.callFrameCount = this._stackFrames.length;
+				if (topFrame && this.pauseInfo) {
+					this.pauseInfo.url = topFrame.file;
+					this.pauseInfo.line = topFrame.line;
+					this.pauseInfo.column = topFrame.column > 0 ? topFrame.column : undefined;
+					this.pauseInfo.callFrameCount = this._stackFrames.length;
 				}
 				return;
 			} catch {
@@ -1431,9 +1529,11 @@ export class DapSession {
 		try {
 			const response = await this.dap.send("threads");
 			const threads = (
-				(response.body as {
-					threads?: Array<{ id: number; name?: string }>;
-				})?.threads ?? []
+				(
+					response.body as {
+						threads?: Array<{ id: number; name?: string }>;
+					}
+				)?.threads ?? []
 			)
 				.filter((thread): thread is { id: number; name?: string } => typeof thread.id === "number")
 				.map((thread) => ({
@@ -1444,7 +1544,10 @@ export class DapSession {
 			this._threads = threads;
 			if (threads.length === 0) {
 				this._threadId = null;
-			} else if (this._threadId === null || !threads.some((thread) => thread.id === this._threadId)) {
+			} else if (
+				this._threadId === null ||
+				!threads.some((thread) => thread.id === this._threadId)
+			) {
 				this._threadId = threads[0]?.id ?? null;
 			}
 		} catch {
@@ -1464,7 +1567,7 @@ export class DapSession {
 			if (ids.length > 0) {
 				return ids;
 			}
-			return isDartRuntime(this._runtime) ? [1] : [];
+			return isDartRuntime(this._runtime) || isFlutterRuntime(this._runtime) ? [1] : [];
 		}
 		return [this._threadId, ...ids.filter((id) => id !== this._threadId)];
 	}
@@ -1489,195 +1592,49 @@ export class DapSession {
 		return threads;
 	}
 
-	private async discoverFlutterVmServiceUrl(toolArgs?: string[]): Promise<string | undefined> {
-		if (process.platform !== "darwin") {
-			return undefined;
+	private resolveDartEntryBreakpoint(
+		program: string,
+		cwd: string,
+	): { file: string; line: number } | null {
+		if (!program) {
+			return null;
 		}
 
-		const hasDnsSd = Bun.spawnSync(["which", "dns-sd"], {
-			stdout: "ignore",
-			stderr: "ignore",
-		}).exitCode === 0;
-		if (!hasDnsSd) {
-			return undefined;
+		const file = isAbsolute(program) ? program : resolve(cwd, program);
+		if (!existsSync(file)) {
+			return null;
 		}
 
-		const appId = this.extractToolArgValue(toolArgs, "--app-id");
-		const preferredPort = this.extractNumericToolArgValue(toolArgs, "--device-vmservice-port");
-		const instanceNames = await this.browseFlutterVmServiceInstances();
-		if (instanceNames.length === 0) {
-			return undefined;
-		}
-
-		const filteredNames = appId
-			? instanceNames.filter((name) => this.matchesFlutterAppId(name, appId))
-			: instanceNames;
-		const orderedNames = [...filteredNames].sort((left, right) => {
-			const leftExact = appId !== undefined && left === appId;
-			const rightExact = appId !== undefined && right === appId;
-			if (leftExact !== rightExact) {
-				return leftExact ? -1 : 1;
-			}
-			return left.localeCompare(right);
-		});
-
-		for (const instanceName of orderedNames) {
-			const candidate = await this.resolveFlutterVmServiceCandidate(instanceName);
-			if (!candidate) {
-				continue;
-			}
-			if (preferredPort !== undefined && candidate.port !== preferredPort) {
-				continue;
-			}
-
-			const url = await this.validateFlutterVmServiceCandidate(candidate);
-			if (url) {
-				return url;
-			}
-		}
-
-		return undefined;
-	}
-
-	private extractToolArgValue(toolArgs: string[] | undefined, flag: string): string | undefined {
-		if (!toolArgs) {
-			return undefined;
-		}
-
-		for (let i = 0; i < toolArgs.length; i++) {
-			const arg = toolArgs[i];
-			if (!arg) {
-				continue;
-			}
-			if (arg === flag) {
-				return toolArgs[i + 1];
-			}
-			if (arg.startsWith(`${flag}=`)) {
-				return arg.slice(flag.length + 1);
-			}
-		}
-
-		return undefined;
-	}
-
-	private extractNumericToolArgValue(toolArgs: string[] | undefined, flag: string): number | undefined {
-		const value = this.extractToolArgValue(toolArgs, flag);
-		if (!value) {
-			return undefined;
-		}
-		const parsed = parseInt(value, 10);
-		return Number.isNaN(parsed) ? undefined : parsed;
-	}
-
-	private matchesFlutterAppId(instanceName: string, appId: string): boolean {
-		return instanceName === appId || instanceName.startsWith(`${appId} (`);
-	}
-
-	private async browseFlutterVmServiceInstances(): Promise<string[]> {
-		const output = await this.collectCommandOutput(
-			["dns-sd", "-B", "_dartVmService._tcp", "local"],
-			2_000,
-		);
-		const matches = [...output.matchAll(/_dartVmService\._tcp\.\s+(.+)$/gm)];
-		return [...new Set(matches.map((match) => match[1]?.trim()).filter((name): name is string => !!name))];
-	}
-
-	private async resolveFlutterVmServiceCandidate(
-		instanceName: string,
-	): Promise<MdnsVmServiceCandidate | undefined> {
-		const output = await this.collectCommandOutput(
-			["dns-sd", "-L", instanceName, "_dartVmService._tcp", "local"],
-			1_200,
-		);
-
-		const resolvedMatch = output.match(/can be reached at\s+(.+?)\.:([0-9]+)\s+\(interface\s+\d+\)/);
-		const authMatch = output.match(/authCode=([^\s]+)/);
-		if (!resolvedMatch?.[1] || !resolvedMatch[2] || !authMatch?.[1]) {
-			return undefined;
-		}
-
-		const port = parseInt(resolvedMatch[2], 10);
-		if (Number.isNaN(port)) {
-			return undefined;
-		}
-
-		let authCode = authMatch[1];
-		if (!authCode.endsWith("/")) {
-			authCode += "/";
-		}
-
-		return {
-			instanceName,
-			resolvedHost: resolvedMatch[1].replace(/\.$/, ""),
-			port,
-			authCode,
-		};
-	}
-
-	private async validateFlutterVmServiceCandidate(
-		candidate: MdnsVmServiceCandidate,
-	): Promise<string | undefined> {
-		const hostCandidates = [
-			"127.0.0.1",
-			"localhost",
-			candidate.resolvedHost,
-		].filter((host, index, hosts): host is string => !!host && hosts.indexOf(host) === index);
-
-		for (const host of hostCandidates) {
-			const baseUrl = `http://${host}:${candidate.port}/${candidate.authCode}`;
-			try {
-				const response = await fetch(`${baseUrl}getVM`, {
-					signal: AbortSignal.timeout(1_500),
-				});
-				if (!response.ok) {
-					continue;
-				}
-
-				const payload = (await response.json()) as { result?: { type?: string } };
-				if (payload.result?.type === "VM") {
-					return `ws://${host}:${candidate.port}/${candidate.authCode}ws`;
-				}
-			} catch {
-				// Try the next hostname candidate.
-			}
-		}
-
-		return undefined;
-	}
-
-	private async collectCommandOutput(command: string[], timeoutMs: number): Promise<string> {
-		const [cmd, ...args] = command;
-		if (!cmd) {
-			return "";
-		}
-
-		const proc = Bun.spawn([cmd, ...args], {
-			stdout: "pipe",
-			stderr: "ignore",
-		});
-		const reader = proc.stdout.getReader();
-		const decoder = new TextDecoder();
-		let output = "";
-		const readLoop = (async () => {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) {
-					break;
-				}
-				output += decoder.decode(value, { stream: true });
-			}
-		})();
-
-		await Bun.sleep(timeoutMs);
 		try {
-			proc.kill();
+			const source = readFileSync(file, "utf8");
+			const lines = source.split(/\r?\n/);
+			for (let index = 0; index < lines.length; index++) {
+				const line = lines[index];
+				if (
+					line &&
+					/^\s*(?:Future(?:<[^>]+>)?\s+)?(?:void\s+)?main\s*\(/.test(line)
+				) {
+					return { file, line: index + 1 };
+				}
+			}
+			return { file, line: 1 };
 		} catch {
-			// Process may already have exited.
+			return null;
 		}
-		await proc.exited.catch(() => {});
-		await readLoop.catch(() => {});
-		output += decoder.decode();
-		return output;
+	}
+
+	private async setTemporaryBreakpoint(file: string, line: number): Promise<void> {
+		await this.getDap().send("setBreakpoints", {
+			source: { path: file },
+			breakpoints: [{ line }],
+		});
+	}
+
+	private async clearTemporaryBreakpoint(file: string): Promise<void> {
+		await this.getDap().send("setBreakpoints", {
+			source: { path: file },
+			breakpoints: [],
+		});
 	}
 
 	private async syncFileBreakpoints(file: string): Promise<void> {
@@ -1736,6 +1693,23 @@ export class DapSession {
 				},
 			};
 		});
+	}
+
+	private async waitForPauseMatch(
+		timeoutMs: number,
+		matches: (pauseInfo: SessionStatus["pauseInfo"] | null) => boolean,
+	): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			if (this.isPaused() && matches(this.pauseInfo)) {
+				if (this._stackFrames.length === 0) {
+					await this.fetchStackTrace();
+				}
+				return;
+			}
+
+			await this.createStoppedWaiter(Math.min(1_000, Math.max(1, deadline - Date.now())));
+		}
 	}
 
 	/**

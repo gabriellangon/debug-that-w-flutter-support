@@ -3,14 +3,14 @@ import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("Execution control", () => {
 	test("continue resumes and process finishes", () =>
-		withPausedSession("test-exec-continue", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-continue", "tests/fixtures/js/step-app.js", async (session) => {
 			await session.continue();
 			await session.waitForState("idle", 5000);
 			expect(["idle", "running"]).toContain(session.sessionState);
 		}));
 
 	test("continue resumes and hits next breakpoint", () =>
-		withPausedSession("test-exec-continue-bp", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-continue-bp", "tests/fixtures/js/step-app.js", async (session) => {
 			await session.cdp?.send("Debugger.setBreakpointByUrl", {
 				lineNumber: 11,
 				urlRegex: "step-app\\.js",
@@ -20,7 +20,7 @@ describe("Execution control", () => {
 		}));
 
 	test("step over advances one line", () =>
-		withPausedSession("test-exec-step-over", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-step-over", "tests/fixtures/js/step-app.js", async (session) => {
 			const lineBefore = session.getStatus().pauseInfo?.line;
 			expect(lineBefore).toBeDefined();
 			await session.step("over");
@@ -29,7 +29,7 @@ describe("Execution control", () => {
 		}));
 
 	test("step into enters a function", () =>
-		withPausedSession("test-exec-step-into", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-step-into", "tests/fixtures/js/step-app.js", async (session) => {
 			let currentLine = session.getStatus().pauseInfo?.line ?? 0;
 			while (currentLine < 10 && session.sessionState === "paused") {
 				await session.step("over");
@@ -47,7 +47,7 @@ describe("Execution control", () => {
 		}));
 
 	test("step out exits current function", () =>
-		withPausedSession("test-exec-step-out", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-step-out", "tests/fixtures/js/step-app.js", async (session) => {
 			let currentLine = session.getStatus().pauseInfo?.line ?? 0;
 			while (currentLine < 10 && session.sessionState === "paused") {
 				await session.step("over");
@@ -85,12 +85,12 @@ describe("Execution control", () => {
 		}));
 
 	test("pause throws when not running", () =>
-		withPausedSession("test-exec-pause-err", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-pause-err", "tests/fixtures/js/step-app.js", async (session) => {
 			await expect(session.pause()).rejects.toThrow("already paused");
 		}));
 
 	test("run-to stops at the specified line", () =>
-		withPausedSession("test-exec-run-to", "tests/fixtures/step-app.js", async (session) => {
+		withPausedSession("test-exec-run-to", "tests/fixtures/js/step-app.js", async (session) => {
 			await session.runTo("step-app.js", 12);
 			expect(session.sessionState).toBe("paused");
 			expect(session.getStatus().pauseInfo?.line).toBe(11);

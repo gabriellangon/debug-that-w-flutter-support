@@ -25,7 +25,7 @@ Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browse
 | Go (delve) | Go | Planned | DAP |
 | Java (JDWP) | Java / Kotlin | Planned | DAP |
 
-dbg auto-detects launch runtimes for JavaScript, Dart, Flutter, and Python when invoked as `node`, `bun`, `dart`, `flutter`, or `python`. Use `--runtime` when you need to force a specific adapter such as `lldb`.
+dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter for `node`, `bun`, `dart`, and `flutter`. For native languages, use `--runtime lldb` to select the DAP adapter.
 
 ## Install
 
@@ -83,26 +83,23 @@ dbg launch --brk tsx src/app.ts
 # Bun
 dbg launch --brk bun app.ts
 
-# C/C++ (via LLDB)
-dbg launch --brk --runtime lldb ./my_program
-
 # Dart
 dbg launch --brk dart bin/main.dart
 
-# Flutter (default device or pass repeated tool args)
-dbg launch --brk flutter lib/main.dart --tool-arg -d --tool-arg macos --tool-arg --flavor --tool-arg dev
+# Flutter
+dbg launch --brk flutter lib/main.dart --device macos
 
-# Python
-dbg launch --brk python app.py
-
-# Attach to a running Dart/Flutter VM service
-dbg attach ws://127.0.0.1:12345/abc=/ws
-
-# Let Flutter discover a running app to attach to
-dbg attach --runtime flutter
+# C/C++ (via LLDB)
+dbg launch --brk --runtime lldb ./my_program
 
 # Attach to a running process (any runtime with --inspect)
 dbg attach 9229
+
+# Attach to a Dart / Flutter VM Service
+dbg attach ws://127.0.0.1:12345/abc=/ws
+
+# Let Flutter discover a running app
+dbg attach --runtime flutter
 
 # Debug loop
 dbg break src/handler.ts:42
@@ -115,8 +112,6 @@ dbg set @v1 100
 dbg hotpatch src/handler.ts   # live-edit from disk (JS/TS only)
 dbg stop
 ```
-
-For Flutter launches, repeat `--tool-arg` for each raw tool flag you want forwarded to `flutter run`. `--device <id>` remains available as a shorthand for `-d <id>`. Dart attach still expects a full VM Service URL; Flutter attach can either use a VM Service URL or omit the target and let the Flutter adapter discover a running app.
 
 ## Commands
 
@@ -139,8 +134,8 @@ Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
-    [--device <id>] [--dsym <path>] [--source-map <from>:<to>]
-  attach <pid|ws-url|port>         Attach to running process / VM service
+    [--dsym <path>] [--source-map <from>:<to>]
+  attach <pid|ws-url|port>         Attach to running process
   stop                             Kill process + daemon
   sessions [--cleanup]             List active sessions
   status                           Session info
@@ -238,4 +233,4 @@ CLI (stateless)  -->  Unix socket IPC  -->  Daemon (per session)
 
 The daemon manages two session types:
 - **DebugSession** (CDP) — for JavaScript runtimes (Node.js, Bun). Uses `RuntimeAdapter` to handle protocol differences between V8 and JSC.
-- **DapSession** (DAP) — for DAP runtimes such as LLDB, Dart, Flutter, and Python. Communicates with a debug adapter over stdin/stdout using the Debug Adapter Protocol.
+- **DapSession** (DAP) — for native debuggers (LLDB, etc.). Communicates with a debug adapter over stdin/stdout using the Debug Adapter Protocol.

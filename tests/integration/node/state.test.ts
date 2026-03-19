@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("buildState integration", () => {
 	test("state returns source, locals, and stack when paused", () =>
-		withPausedSession("test-state-full", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-state-full", "tests/fixtures/js/simple-app.js", async (session) => {
 			const snapshot = await session.buildState();
 			expect(snapshot.status).toBe("paused");
 			expect(snapshot.reason).toBeDefined();
@@ -31,7 +31,7 @@ describe("buildState integration", () => {
 		}));
 
 	test("state with vars filter returns only locals", () =>
-		withPausedSession("test-state-vars", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-state-vars", "tests/fixtures/js/simple-app.js", async (session) => {
 			const snapshot = await session.buildState({ vars: true });
 			expect(snapshot.status).toBe("paused");
 			expect(snapshot.vars).toBeDefined();
@@ -41,7 +41,7 @@ describe("buildState integration", () => {
 		}));
 
 	test("state with stack filter returns only stack", () =>
-		withPausedSession("test-state-stack", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-state-stack", "tests/fixtures/js/simple-app.js", async (session) => {
 			const snapshot = await session.buildState({ stack: true });
 			expect(snapshot.status).toBe("paused");
 			expect(snapshot.stack).toBeDefined();
@@ -51,7 +51,7 @@ describe("buildState integration", () => {
 		}));
 
 	test("state with code filter returns only source", () =>
-		withPausedSession("test-state-code", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-state-code", "tests/fixtures/js/simple-app.js", async (session) => {
 			const snapshot = await session.buildState({ code: true });
 			expect(snapshot.status).toBe("paused");
 			expect(snapshot.source).toBeDefined();
@@ -61,13 +61,13 @@ describe("buildState integration", () => {
 		}));
 
 	test("state returns idle status when no target", async () => {
-		const session = new DebugSession("test-state-idle");
+		const session = new CdpSession("test-state-idle");
 		const snapshot = await session.buildState();
 		expect(snapshot.status).toBe("idle");
 	});
 
 	test("state assigns refs to variables and frames", () =>
-		withPausedSession("test-state-refs", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-state-refs", "tests/fixtures/js/simple-app.js", async (session) => {
 			const snapshot = await session.buildState();
 			if (snapshot.vars && snapshot.vars.length > 0) {
 				expect(snapshot.vars[0]?.ref).toMatch(/^@v\d+$/);
@@ -80,7 +80,7 @@ describe("buildState integration", () => {
 		}));
 
 	test("state with custom lines context", () =>
-		withPausedSession("test-state-lines", "tests/fixtures/simple-app.js", async (session) => {
+		withPausedSession("test-state-lines", "tests/fixtures/js/simple-app.js", async (session) => {
 			const snapshot = await session.buildState({ code: true, lines: 5 });
 			expect(snapshot.source).toBeDefined();
 			expect(snapshot.source?.lines.length).toBeGreaterThan(0);

@@ -1,67 +1,39 @@
-import { parseIntFlag } from "../cli/parse-flag.ts";
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
-import type { StackFrame } from "../formatter/stack.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { formatStack } from "../formatter/stack.ts";
 
-registerCommand("stack", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "stack",
+	description: "Show call stack",
+	usage: "stack [--async-depth N]",
+	category: "inspection",
+	positional: { kind: "none" },
+	flags: z.object({
+		"async-depth": z.coerce.number().optional().meta({ description: "Async stack depth" }),
+		generated: z.boolean().optional().meta({ description: "Show generated code" }),
+		filter: z.string().optional().meta({ description: "Filter by keyword" }),
+	}),
+	handler: async (ctx) => {
+		const data = await daemonRequest(ctx.global.session, "stack", {
+			asyncDepth: ctx.flags["async-depth"],
+			generated: ctx.flags.generated || undefined,
+			filter: ctx.flags.filter,
+		});
+		if (!data) return 1;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return 0;
+		}
 
-	const client = new DaemonClient(session);
+		if (data.length === 0) {
+			console.log("No stack frames");
+			return 0;
+		}
 
-	const stackArgs: Record<string, unknown> = {};
+		console.log(formatStack(data));
 
-	const asyncDepth = parseIntFlag(args.flags, "async-depth");
-	if (asyncDepth !== undefined) stackArgs.asyncDepth = asyncDepth;
-	if (args.flags.generated === true) {
-		stackArgs.generated = true;
-	}
-	if (typeof args.flags.filter === "string") {
-		stackArgs.filter = args.flags.filter;
-	}
-
-	const response = await client.request("stack", stackArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as Array<{
-		ref: string;
-		functionName: string;
-		file: string;
-		line: number;
-		column?: number;
-		isAsync?: boolean;
-	}>;
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
 		return 0;
-	}
-
-	if (data.length === 0) {
-		console.log("No stack frames");
-		return 0;
-	}
-
-	const frames: StackFrame[] = data.map((f) => ({
-		ref: f.ref,
-		functionName: f.functionName,
-		file: f.file,
-		line: f.line,
-		column: f.column,
-		isAsync: f.isAsync,
-	}));
-	console.log(formatStack(frames));
-
-	return 0;
+	},
 });

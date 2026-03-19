@@ -3,7 +3,7 @@ import { withDebuggerSession, withSession } from "../../helpers.ts";
 
 describe("Inspection: eval", () => {
 	test("eval evaluates a simple expression", () =>
-		withDebuggerSession("test-eval-simple", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-eval-simple", "tests/fixtures/js/inspect-app.js", async (session) => {
 			expect(session.sessionState).toBe("paused");
 			const result = await session.eval("1 + 2");
 			expect(result.ref).toMatch(/^@v/);
@@ -12,7 +12,7 @@ describe("Inspection: eval", () => {
 		}));
 
 	test("eval accesses local variables", () =>
-		withDebuggerSession("test-eval-locals", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-eval-locals", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const result = await session.eval("num");
 			expect(result.ref).toMatch(/^@v/);
 			expect(result.type).toBe("number");
@@ -20,22 +20,26 @@ describe("Inspection: eval", () => {
 		}));
 
 	test("eval accesses object properties", () =>
-		withDebuggerSession("test-eval-obj-prop", "tests/fixtures/inspect-app.js", async (session) => {
-			const result = await session.eval("obj.name");
-			expect(result.ref).toMatch(/^@v/);
-			expect(result.type).toBe("string");
-			expect(result.value).toContain("test");
-		}));
+		withDebuggerSession(
+			"test-eval-obj-prop",
+			"tests/fixtures/js/inspect-app.js",
+			async (session) => {
+				const result = await session.eval("obj.name");
+				expect(result.ref).toMatch(/^@v/);
+				expect(result.type).toBe("string");
+				expect(result.value).toContain("test");
+			},
+		));
 
 	test("eval with string concatenation", () =>
-		withDebuggerSession("test-eval-concat", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-eval-concat", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const result = await session.eval("str + ' world'");
 			expect(result.type).toBe("string");
 			expect(result.value).toContain("hello world");
 		}));
 
 	test("eval returns object with objectId", () =>
-		withDebuggerSession("test-eval-object", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-eval-object", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const result = await session.eval("obj");
 			expect(result.ref).toMatch(/^@v/);
 			expect(result.type).toBe("object");
@@ -46,7 +50,7 @@ describe("Inspection: eval", () => {
 	test("eval syntax error throws", () =>
 		withDebuggerSession(
 			"test-eval-syntax-err",
-			"tests/fixtures/inspect-app.js",
+			"tests/fixtures/js/inspect-app.js",
 			async (session) => {
 				await expect(session.eval("if (")).rejects.toThrow();
 			},
@@ -62,7 +66,7 @@ describe("Inspection: eval", () => {
 	test("eval with @ref interpolation", () =>
 		withDebuggerSession(
 			"test-eval-ref-interp",
-			"tests/fixtures/inspect-app.js",
+			"tests/fixtures/js/inspect-app.js",
 			async (session) => {
 				const vars = await session.getVars();
 				const objVar = vars.find((v) => v.name === "obj");
@@ -78,7 +82,7 @@ describe("Inspection: eval", () => {
 
 describe("Inspection: vars", () => {
 	test("getVars returns local variables with refs", () =>
-		withDebuggerSession("test-vars-basic", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-vars-basic", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const vars = await session.getVars();
 			expect(vars.length).toBeGreaterThan(0);
 
@@ -104,7 +108,7 @@ describe("Inspection: vars", () => {
 		}));
 
 	test("getVars with name filter", () =>
-		withDebuggerSession("test-vars-filter", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-vars-filter", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const vars = await session.getVars({ names: ["num", "str"] });
 			expect(vars.length).toBe(2);
 			const names = vars.map((v) => v.name);
@@ -122,7 +126,7 @@ describe("Inspection: vars", () => {
 
 describe("Inspection: props", () => {
 	test("getProps expands an object", () =>
-		withDebuggerSession("test-props-basic", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-props-basic", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const vars = await session.getVars();
 			const objVar = vars.find((v) => v.name === "obj");
 			expect(objVar).toBeDefined();
@@ -141,7 +145,7 @@ describe("Inspection: props", () => {
 		}));
 
 	test("getProps assigns @o refs for object-type properties", () =>
-		withDebuggerSession("test-props-orefs", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-props-orefs", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const vars = await session.getVars();
 			const objVar = vars.find((v) => v.name === "obj");
 			expect(objVar).toBeDefined();
@@ -159,7 +163,7 @@ describe("Inspection: props", () => {
 		}));
 
 	test("getProps expands an array", () =>
-		withDebuggerSession("test-props-array", "tests/fixtures/inspect-app.js", async (session) => {
+		withDebuggerSession("test-props-array", "tests/fixtures/js/inspect-app.js", async (session) => {
 			const vars = await session.getVars();
 			const arrVar = vars.find((v) => v.name === "arr");
 			expect(arrVar).toBeDefined();
@@ -171,14 +175,18 @@ describe("Inspection: props", () => {
 		}));
 
 	test("getProps on unknown ref throws", () =>
-		withDebuggerSession("test-props-unknown", "tests/fixtures/inspect-app.js", async (session) => {
-			await expect(session.getProps("@v999")).rejects.toThrow("Unknown ref");
-		}));
+		withDebuggerSession(
+			"test-props-unknown",
+			"tests/fixtures/js/inspect-app.js",
+			async (session) => {
+				await expect(session.getProps("@v999")).rejects.toThrow("Unknown ref");
+			},
+		));
 
 	test("getProps on primitive ref throws gracefully", () =>
 		withDebuggerSession(
 			"test-props-primitive",
-			"tests/fixtures/inspect-app.js",
+			"tests/fixtures/js/inspect-app.js",
 			async (session) => {
 				const vars = await session.getVars();
 				const numVar = vars.find((v) => v.name === "num");

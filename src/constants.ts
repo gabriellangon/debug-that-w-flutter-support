@@ -41,5 +41,14 @@ export const MAX_SOURCE_LINE_WIDTH = 120;
 /** Time to wait for the DAP "initialized" event during launch/attach. */
 export const INITIALIZED_TIMEOUT_MS = 10_000;
 
+/** Time to wait for Flutter to reach the initial paused state after launch. */
+export const FLUTTER_INITIAL_STOP_TIMEOUT_MS = 120_000;
+
+/** Time to wait for a long-running Flutter daemon request like launch/attach. */
+export const FLUTTER_DAEMON_REQUEST_TIMEOUT_MS = 300_000;
+
 /** Max request payload size (bytes) accepted by the daemon IPC server. */
 export const MAX_REQUEST_SIZE = 1_048_576; // 1MB
+
+/** Max bytes of adapter stderr to retain for error reporting. */
+export const MAX_STDERR_BUFFER = 4_096;

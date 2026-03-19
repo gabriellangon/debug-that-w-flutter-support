@@ -1,54 +1,44 @@
-import { parseIntFlag } from "../cli/parse-flag.ts";
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
-import type { ExceptionEntry } from "../daemon/session.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 import { formatTimestamp } from "../formatter/timestamp.ts";
 
-registerCommand("exceptions", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "exceptions",
+	description: "Captured exceptions",
+	usage: "exceptions [--since N]",
+	category: "inspection",
+	positional: { kind: "none" },
+	flags: z.object({
+		since: z.coerce.number().optional().meta({ description: "Show since timestamp" }),
+	}),
+	handler: async (ctx) => {
+		const entries = await daemonRequest(ctx.global.session, "exceptions", {
+			...(ctx.flags.since !== undefined && { since: ctx.flags.since }),
+		});
+		if (!entries) return 1;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
-
-	const client = new DaemonClient(session);
-
-	const exceptionsArgs: Record<string, unknown> = {};
-	const since = parseIntFlag(args.flags, "since");
-	if (since !== undefined) exceptionsArgs.since = since;
-
-	const response = await client.request("exceptions", exceptionsArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const entries = response.data as ExceptionEntry[];
-
-	if (args.global.json) {
-		console.log(JSON.stringify(entries, null, 2));
-		return 0;
-	}
-
-	if (entries.length === 0) {
-		console.log("(no exceptions)");
-		return 0;
-	}
-
-	for (const entry of entries) {
-		const ts = formatTimestamp(entry.timestamp);
-		console.log(`[${ts}] ${entry.text}`);
-		if (entry.description) {
-			console.log(`  ${entry.description}`);
+		if (ctx.global.json) {
+			console.log(JSON.stringify(entries, null, 2));
+			return 0;
 		}
-		if (entry.stackTrace) {
-			console.log(entry.stackTrace);
-		}
-	}
 
-	return 0;
+		if (entries.length === 0) {
+			console.log("(no exceptions)");
+			return 0;
+		}
+
+		for (const entry of entries) {
+			const ts = formatTimestamp(entry.timestamp);
+			console.log(`[${ts}] ${entry.text}`);
+			if (entry.description) {
+				console.log(`  ${entry.description}`);
+			}
+			if (entry.stackTrace) {
+				console.log(entry.stackTrace);
+			}
+		}
+
+		return 0;
+	},
 });

@@ -1,67 +1,48 @@
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("hotpatch", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "hotpatch",
+	description: "Live-edit script source",
+	usage: "hotpatch <file> [--dry-run]",
+	category: "mutation",
+	positional: { kind: "required", name: "file", description: "File to patch" },
+	flags: z.object({
+		"dry-run": z.boolean().optional().meta({ description: "Test without applying" }),
+	}),
+	handler: async (ctx) => {
+		const file = ctx.positional;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
+		// Read the file contents
+		let source: string;
+		try {
+			source = await Bun.file(file).text();
+		} catch {
+			console.error(`Cannot read file: ${file}`);
+			return 1;
+		}
 
-	const file = args.subcommand;
-	if (!file) {
-		console.error("No file specified");
-		console.error("  -> Try: dbg hotpatch app.js");
-		return 1;
-	}
+		const data = await daemonRequest(ctx.global.session, "hotpatch", {
+			file,
+			source,
+			dryRun: ctx.flags["dry-run"] || false,
+		});
+		if (!data) return 1;
 
-	// Read the file contents
-	let source: string;
-	try {
-		source = await Bun.file(file).text();
-	} catch {
-		console.error(`Cannot read file: ${file}`);
-		return 1;
-	}
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return 0;
+		}
 
-	const hotpatchArgs: Record<string, unknown> = {
-		file,
-		source,
-	};
+		if (data.exceptionDetails) {
+			console.error(`hotpatch failed: ${JSON.stringify(data.exceptionDetails)}`);
+			return 1;
+		}
 
-	if (args.flags["dry-run"] === true) {
-		hotpatchArgs.dryRun = true;
-	}
+		const dryRunLabel = ctx.flags["dry-run"] ? " (dry-run)" : "";
+		console.log(`hotpatch ${data.status}${dryRunLabel}: ${file}`);
 
-	const client = new DaemonClient(session);
-	const response = await client.request("hotpatch", hotpatchArgs);
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	const data = response.data as {
-		status: string;
-		callFrames?: unknown[];
-		exceptionDetails?: unknown;
-	};
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
 		return 0;
-	}
-
-	if (data.exceptionDetails) {
-		console.error(`hotpatch failed: ${JSON.stringify(data.exceptionDetails)}`);
-		return 1;
-	}
-
-	const dryRunLabel = args.flags["dry-run"] === true ? " (dry-run)" : "";
-	console.log(`hotpatch ${data.status}${dryRunLabel}: ${file}`);
-
-	return 0;
+	},
 });

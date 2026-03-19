@@ -1,28 +1,23 @@
-import { registerCommand } from "../cli/registry.ts";
-import { DaemonClient } from "../daemon/client.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
+import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("stop", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "stop",
+	description: "Kill process + daemon",
+	category: "session",
+	positional: { kind: "none" },
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const result = await daemonRequest(ctx.global.session, "stop");
+		if (!result) return 1;
 
-	if (!DaemonClient.isRunning(session)) {
-		console.error(`No active session "${session}"`);
-		return 1;
-	}
+		if (ctx.global.json) {
+			console.log(JSON.stringify({ ok: true, session: ctx.global.session }));
+		} else {
+			console.log(`Session "${ctx.global.session}" stopped`);
+		}
 
-	const client = new DaemonClient(session);
-	const response = await client.request("stop");
-
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  ${response.suggestion}`);
-		return 1;
-	}
-
-	if (args.global.json) {
-		console.log(JSON.stringify({ ok: true, session }));
-	} else {
-		console.log(`Session "${session}" stopped`);
-	}
-
-	return 0;
+		return 0;
+	},
 });
